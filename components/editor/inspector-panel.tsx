@@ -507,7 +507,7 @@ function TextInspector() {
           >
             Add Text
           </Button>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {TEXT_PRESETS.map((preset) => (
               <button
                 key={preset.id}
@@ -651,7 +651,7 @@ function OverlaysInspector() {
         title="Film Grain"
         detail="SVG turbulence overlays with blend modes tuned for subtle or gritty analog texture."
       >
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {GRAIN_PRESETS.map((preset) => (
             <OverlayPresetButton
               key={preset.id}
@@ -794,7 +794,7 @@ function OverlaysInspector() {
         title="Dust & Scratches"
         detail="Add restrained analog imperfections on top of the frame."
       >
-        <div className="flex items-center justify-between gap-4 border border-[var(--border)] bg-[rgba(255,255,255,0.02)] p-4">
+        <div className="flex flex-col gap-4 border border-[var(--border)] bg-[rgba(255,255,255,0.02)] p-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-[11px] uppercase tracking-[0.26em] text-[var(--text-primary)]">
               Imperfections
@@ -873,7 +873,7 @@ function CropInspector() {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Button
               variant={project.crop.flipX ? "amber" : "outline"}
               onClick={() => toggleFlip("x")}
@@ -888,7 +888,7 @@ function CropInspector() {
             </Button>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Button
               variant="ghost"
               onClick={() => setCropRotation(0)}
@@ -923,7 +923,7 @@ export function InspectorPanel({ className }: { className?: string }) {
 
   return (
     <div className={cn("min-h-0 h-full overflow-y-auto overscroll-contain", className)}>
-      <div className="space-y-6 p-4 sm:p-5">
+      <div className="space-y-6 p-4 pb-6 sm:p-5">
         {activeTab === "filters" ? <FiltersInspector /> : null}
         {activeTab === "adjustments" ? <AdjustmentsInspector /> : null}
         {activeTab === "text" ? <TextInspector /> : null}

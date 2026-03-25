@@ -2032,7 +2032,7 @@ export const CanvasStage = React.forwardRef<
 
       {project.imageSrc ? (
         <>
-          <div className="pointer-events-none absolute bottom-3 right-3 z-10 flex items-center gap-2 sm:bottom-6 sm:right-6 sm:gap-3">
+          <div className="pointer-events-none absolute right-3 z-10 flex items-center gap-2 bottom-[calc(0.5rem+env(safe-area-inset-bottom))] sm:bottom-6 sm:right-6 sm:gap-3">
             <div className="hidden border border-[var(--border)] bg-[rgba(10,10,10,0.82)] px-3 py-2 font-mono text-[11px] uppercase tracking-[0.24em] text-[var(--text-muted)] sm:block">
               {Math.round(stageSize.width)} x {Math.round(stageSize.height)}
             </div>
@@ -2046,7 +2046,7 @@ export const CanvasStage = React.forwardRef<
             </button>
           </div>
 
-          <div className="absolute bottom-3 left-3 right-3 z-10 flex items-center justify-start gap-2 overflow-x-auto whitespace-nowrap border border-[var(--border)] bg-[rgba(10,10,10,0.88)] px-2 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:bottom-6 sm:left-1/2 sm:right-auto sm:justify-center sm:-translate-x-1/2">
+          <div className="absolute left-3 right-3 z-10 flex items-center justify-start gap-2 overflow-x-auto whitespace-nowrap border border-[var(--border)] bg-[rgba(10,10,10,0.88)] px-2 py-2 bottom-[calc(0.5rem+env(safe-area-inset-bottom))] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:bottom-6 sm:left-1/2 sm:right-auto sm:justify-center sm:-translate-x-1/2">
             {selectedTextLayer ? (
               <Button
                 size="sm"
