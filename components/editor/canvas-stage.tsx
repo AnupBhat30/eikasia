@@ -32,10 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import {
-  getTextShadowStyle,
-  resolveTextFontFamily,
-} from "@/lib/text-style";
+import { getTextShadowStyle, resolveTextFontFamily } from "@/lib/text-style";
 import { drawCoverImage, renderProjectRaster } from "@/lib/exportImage";
 import { clamp, cn, fromPercentage, round, toPercentage } from "@/lib/utils";
 
@@ -250,15 +247,22 @@ function applyLayerToTextbox(
     editable: true,
     padding: Math.max(4, Math.round(fontSize * 0.05)),
     lockScalingX: false,
-    lockScalingY: true,
+    lockScalingY: false,
     lockRotation: true,
     lockSkewingX: true,
     lockSkewingY: true,
     transparentCorners: false,
-    cornerStyle: "rect",
+    cornerStyle: "circle",
     cornerColor: "#f59e0b",
+    cornerStrokeColor: "#ffffff",
     borderColor: "#f59e0b",
-    cornerSize: 12,
+    cornerSize: 14,
+    touchCornerSize: 28,
+    borderDashArray: [4, 4],
+    selectable: true,
+    evented: true,
+    hasControls: true,
+    hasBorders: true,
   } as never);
 
   const layoutTextbox = textbox as EditorTextbox & {
@@ -269,12 +273,14 @@ function applyLayerToTextbox(
   layoutTextbox.initDimensions?.();
   layoutTextbox.dirty = true;
   textbox.setControlsVisibility({
-    tl: false,
-    tr: false,
-    bl: false,
-    br: false,
-    mt: false,
-    mb: false,
+    mt: true,
+    mb: true,
+    ml: true,
+    mr: true,
+    tl: true,
+    tr: true,
+    bl: true,
+    br: true,
     mtr: false,
   });
   textbox.shadow = createTextShadow(layer.shadowPreset, layer.color);
@@ -306,7 +312,7 @@ function getCropBounds(
   };
 }
 
-function constrainTextboxToCrop(
+function snapTextboxToCropGuides(
   textbox: EditorTextbox,
   perspective: ReturnType<typeof useEditor>["project"]["crop"]["perspective"],
   stageSize: StageSize,
@@ -318,30 +324,115 @@ function constrainTextboxToCrop(
   );
   const halfWidth = (textbox.getScaledWidth?.() ?? textbox.width ?? 0) / 2;
   const halfHeight = (textbox.getScaledHeight?.() ?? textbox.height ?? 0) / 2;
-
   const minX = bounds.left + halfWidth + safePad;
   const maxX = bounds.right - halfWidth - safePad;
   const minY = bounds.top + halfHeight + safePad;
   const maxY = bounds.bottom - halfHeight - safePad;
+  const centerX = (bounds.left + bounds.right) / 2;
+  const centerY = (bounds.top + bounds.bottom) / 2;
+  const snapThreshold = Math.max(
+    8,
+    Math.min(stageSize.width, stageSize.height) * 0.018,
+  );
+
+  const snap = (value: number, targets: number[]) => {
+    let snapped = value;
+    let closestDistance = snapThreshold + 1;
+
+    targets.forEach((target) => {
+      const distance = Math.abs(value - target);
+
+      if (distance <= snapThreshold && distance < closestDistance) {
+        snapped = target;
+        closestDistance = distance;
+      }
+    });
+
+    return snapped;
+  };
 
   const currentLeft = textbox.left ?? 0;
   const currentTop = textbox.top ?? 0;
+  const nextLeft = snap(
+    currentLeft,
+    minX <= maxX ? [minX, centerX, maxX] : [centerX],
+  );
+  const nextTop = snap(
+    currentTop,
+    minY <= maxY ? [minY, centerY, maxY] : [centerY],
+  );
+
+  if (nextLeft === currentLeft && nextTop === currentTop) {
+    return;
+  }
 
   textbox.set({
-    left:
-      minX <= maxX
-        ? clamp(currentLeft, minX, maxX)
-        : (bounds.left + bounds.right) / 2,
-    top:
-      minY <= maxY
-        ? clamp(currentTop, minY, maxY)
-        : (bounds.top + bounds.bottom) / 2,
+    left: nextLeft,
+    top: nextTop,
   } as never);
   textbox.setCoords();
 }
 
-function getTouchDistance(first: Touch, second: Touch) {
-  return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+function keepTextboxPartiallyVisible(
+  textbox: EditorTextbox,
+  stageSize: StageSize,
+) {
+  const halfWidth = (textbox.getScaledWidth?.() ?? textbox.width ?? 0) / 2;
+  const halfHeight = (textbox.getScaledHeight?.() ?? textbox.height ?? 0) / 2;
+  const minVisible = Math.max(
+    24,
+    Math.min(stageSize.width, stageSize.height) * 0.03,
+  );
+  const minLeft = -halfWidth + minVisible;
+  const maxLeft = stageSize.width + halfWidth - minVisible;
+  const minTop = -halfHeight + minVisible;
+  const maxTop = stageSize.height + halfHeight - minVisible;
+  const currentLeft = textbox.left ?? 0;
+  const currentTop = textbox.top ?? 0;
+
+  textbox.set({
+    left: clamp(currentLeft, minLeft, maxLeft),
+    top: clamp(currentTop, minTop, maxTop),
+  } as never);
+  textbox.setCoords();
+}
+
+function normalizeTextboxScale(textbox: EditorTextbox) {
+  const scaleX = textbox.scaleX ?? 1;
+  const scaleY = textbox.scaleY ?? 1;
+
+  if (scaleX === 1 && scaleY === 1) {
+    return;
+  }
+
+  const currentWidth = textbox.width ?? 0;
+  const currentFontSize = textbox.fontSize ?? 16;
+
+  // Scale width and font size respectively
+  const newWidth = Math.max(20, currentWidth * scaleX);
+  const newFontSize = Math.max(4, currentFontSize * scaleY);
+
+  const layoutTextbox = textbox as EditorTextbox & {
+    initDimensions?: () => void;
+    dirty?: boolean;
+  };
+
+  textbox.set({
+    width: newWidth,
+    fontSize: newFontSize,
+    scaleX: 1,
+    scaleY: 1,
+  } as never);
+  layoutTextbox.initDimensions?.();
+  layoutTextbox.dirty = true;
+  textbox.setCoords();
+}
+
+function getTouchDistance(first: React.Touch, second: React.Touch) {
+  return Math.hypot(
+    first.clientX - second.clientX,
+    first.clientY - second.clientY,
+  );
 }
 
 function serializeCanvas(
@@ -370,17 +461,15 @@ function serializeCanvas(
         xPct: toPercentage(center.x ?? 0, stageSize.width),
         yPct: toPercentage(center.y ?? 0, stageSize.height),
         widthPct: toPercentage(textbox.width ?? 0, stageSize.width),
-        fontSizePct:
-          existing?.fontSizePct ??
-          toPercentage(textbox.fontSize ?? 0, baseSize),
+        fontSizePct: toPercentage(textbox.fontSize ?? 0, baseSize),
         fontFamily: inferFontFamily(textbox.fontFamily),
         color:
           typeof textbox.fill === "string"
             ? textbox.fill
             : (existing?.color ?? "#fafafa"),
         opacity: textbox.opacity ?? 1,
-        letterSpacing: existing?.letterSpacing ?? textbox.charSpacing ?? 0,
-        lineHeight: existing?.lineHeight ?? textbox.lineHeight ?? 1.1,
+        letterSpacing: textbox.charSpacing ?? existing?.letterSpacing ?? 0,
+        lineHeight: textbox.lineHeight ?? existing?.lineHeight ?? 1.1,
         shadowPreset: inferShadowPreset(textbox.shadow),
         blendMode: inferBlendMode(textbox.globalCompositeOperation),
         backgroundColor:
@@ -520,7 +609,11 @@ export const CanvasStage = React.forwardRef<
   const rasterProject = React.useMemo<
     Pick<
       ProjectState,
-      "activeLookId" | "filterIntensity" | "acrosChannel" | "adjustments" | "overlayLayers"
+      | "activeLookId"
+      | "filterIntensity"
+      | "acrosChannel"
+      | "adjustments"
+      | "overlayLayers"
     >
   >(
     () => ({
@@ -674,10 +767,65 @@ export const CanvasStage = React.forwardRef<
   }, [project.imageSrc]);
 
   React.useEffect(() => {
+    const isTypingTarget = (target: EventTarget | null) => {
+      const node = target as HTMLElement | null;
+
+      if (!node) {
+        return false;
+      }
+
+      const tag = node.tagName.toLowerCase();
+      return (
+        node.isContentEditable ||
+        tag === "input" ||
+        tag === "textarea" ||
+        tag === "select" ||
+        Boolean(node.closest("[contenteditable='true']"))
+      );
+    };
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.code === "Space") {
         setSpacePressed(true);
+        return;
       }
+
+      // Handle delete key - must be Delete or Backspace
+      const isDeleteKey = event.key === "Delete" || event.key === "Backspace";
+
+      if (!isDeleteKey) {
+        return;
+      }
+
+      // Don't delete if user has keyboard modifiers pressed
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
+      // Don't delete if no text is selected
+      if (!selectedTextId) {
+        return;
+      }
+
+      // Don't delete if user is typing in a text input
+      if (isTypingTarget(event.target)) {
+        return;
+      }
+
+      // Check if text is being edited - allow backspace in editor
+      const canvas = fabricCanvasRef.current;
+      const activeTextbox = canvas?.getActiveObject() as EditorTextbox | null;
+
+      if (activeTextbox?.isEditing) {
+        // Allow normal backspace behavior while editing text
+        return;
+      }
+
+      // Delete the text layer
+      event.preventDefault();
+      removeTextLayer(selectedTextId);
+      setSelectedTextId(null);
+      setEditingTextId(null);
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
@@ -693,7 +841,7 @@ export const CanvasStage = React.forwardRef<
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, []);
+  }, [removeTextLayer, selectedTextId, setSelectedTextId]);
 
   React.useEffect(() => {
     if (!project.imageSrc) {
@@ -751,9 +899,8 @@ export const CanvasStage = React.forwardRef<
     );
     const isSmallViewport = smallestViewportSide <= 900;
     const hardwareConcurrency = navigator.hardwareConcurrency ?? 8;
-    const deviceMemory = (
-      navigator as Navigator & { deviceMemory?: number }
-    ).deviceMemory;
+    const deviceMemory = (navigator as Navigator & { deviceMemory?: number })
+      .deviceMemory;
     const isLowPowerDevice =
       hardwareConcurrency <= 6 ||
       (typeof deviceMemory === "number" && deviceMemory <= 4);
@@ -841,12 +988,7 @@ export const CanvasStage = React.forwardRef<
       window.cancelAnimationFrame(fullFrameId);
       window.clearTimeout(fullRenderTimer);
     };
-  }, [
-    rasterProject,
-    sourceImage,
-    stageSize.height,
-    stageSize.width,
-  ]);
+  }, [rasterProject, sourceImage, stageSize.height, stageSize.width]);
 
   React.useEffect(() => {
     if (!canvasRef.current || fabricCanvasRef.current) {
@@ -906,7 +1048,27 @@ export const CanvasStage = React.forwardRef<
         return;
       }
 
-      constrainTextboxToCrop(target, currentPerspective, currentStageSize);
+      snapTextboxToCropGuides(target, currentPerspective, currentStageSize);
+      keepTextboxPartiallyVisible(target, currentStageSize);
+    };
+
+    const handleObjectScaling = (event: { target?: unknown }) => {
+      const target = event.target as EditorTextbox | null | undefined;
+      const currentStageSize = latestStageSizeRef.current;
+      const currentPerspective = latestPerspectiveRef.current;
+
+      if (!target || target.type !== "textbox") {
+        return;
+      }
+
+      if (!currentStageSize.width || !currentStageSize.height) {
+        return;
+      }
+
+      normalizeTextboxScale(target);
+      snapTextboxToCropGuides(target, currentPerspective, currentStageSize);
+      keepTextboxPartiallyVisible(target, currentStageSize);
+      canvas.requestRenderAll();
     };
 
     const handleSelectionCleared = () => {
@@ -922,6 +1084,7 @@ export const CanvasStage = React.forwardRef<
     canvas.on("text:editing:entered", openTextControls);
     canvas.on("text:editing:exited", commitLayers);
     canvas.on("object:moving", handleObjectMoving);
+    canvas.on("object:scaling", handleObjectScaling);
     canvas.on("object:modified", commitLayers);
     canvas.on("text:changed", commitLayers);
 
@@ -930,6 +1093,7 @@ export const CanvasStage = React.forwardRef<
     return () => {
       canvas.off("selection:cleared", handleSelectionCleared);
       canvas.off("object:moving", handleObjectMoving);
+      canvas.off("object:scaling", handleObjectScaling);
       canvas.off("mouse:dblclick", openTextControls);
       canvas.off("text:editing:entered", openTextControls);
       canvas.off("text:editing:exited", commitLayers);
@@ -968,11 +1132,9 @@ export const CanvasStage = React.forwardRef<
 
       if (existing) {
         applyLayerToTextbox(existing, layer, stageSize);
-        constrainTextboxToCrop(existing, project.crop.perspective, stageSize);
       } else {
         const textbox = new Textbox(layer.text) as EditorTextbox;
         applyLayerToTextbox(textbox, layer, stageSize);
-        constrainTextboxToCrop(textbox, project.crop.perspective, stageSize);
         canvas.add(textbox);
       }
 
@@ -1187,7 +1349,9 @@ export const CanvasStage = React.forwardRef<
     });
   };
 
-  const handleViewportTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+  const handleViewportTouchStart = (
+    event: React.TouchEvent<HTMLDivElement>,
+  ) => {
     if (!project.imageSrc) {
       return;
     }
@@ -1371,23 +1535,23 @@ export const CanvasStage = React.forwardRef<
               className="relative overflow-hidden border border-[var(--border)] bg-[#111111] shadow-[0_28px_100px_rgba(0,0,0,0.6)]"
               style={{ width: stageSize.width, height: stageSize.height }}
             >
-              <div
-                className="absolute inset-0 overflow-hidden"
-                style={{ clipPath }}
-              >
-                <div className="absolute inset-0" style={transformStyle}>
+              <div className="absolute inset-0" style={transformStyle}>
+                <div
+                  className="absolute inset-0 overflow-hidden"
+                  style={{ clipPath }}
+                >
                   <div className="absolute inset-0 isolate overflow-hidden">
                     <canvas
                       ref={previewCanvasRef}
                       className="absolute inset-0 z-0 h-full w-full"
                     />
                   </div>
-
-                  <canvas
-                    ref={canvasRef}
-                    className="absolute inset-0 z-10 h-full w-full"
-                  />
                 </div>
+
+                <canvas
+                  ref={canvasRef}
+                  className="absolute inset-0 z-10 h-full w-full"
+                />
               </div>
 
               {activeTab === "crop" ? (
@@ -1439,7 +1603,9 @@ export const CanvasStage = React.forwardRef<
           ) : null}
 
           <Popover
-            open={Boolean(selectedTextLayer && editingTextId === selectedTextId)}
+            open={Boolean(
+              selectedTextLayer && editingTextId === selectedTextId,
+            )}
             onOpenChange={handleTextPopoverOpenChange}
           >
             <PopoverAnchor asChild>
@@ -1782,6 +1948,19 @@ export const CanvasStage = React.forwardRef<
             {selectedTextLayer ? (
               <Button
                 size="sm"
+                variant="ghost"
+                onClick={() => {
+                  removeTextLayer(selectedTextLayer.id);
+                  setSelectedTextId(null);
+                  setEditingTextId(null);
+                }}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            ) : null}
+            {selectedTextLayer ? (
+              <Button
+                size="sm"
                 variant={
                   editingTextId === selectedTextLayer.id ? "amber" : "outline"
                 }
@@ -1811,8 +1990,11 @@ export const CanvasStage = React.forwardRef<
             <Button size="sm" variant="outline" onClick={resetViewport}>
               Fit
             </Button>
-            <div className="hidden border-l border-[var(--border)] pl-3 font-mono text-[11px] uppercase tracking-[0.22em] text-[var(--text-muted)] lg:block">
-              Drag Text to Move • Double-Click or Text Button for Controls • Pinch/Drag (Touch) • Hold Space (Desktop)
+            <div className="hidden min-w-0 max-w-[36vw] border-l border-[var(--border)] pl-3 font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)] xl:block">
+              <span className="block truncate">
+                Move • Resize Corners • Double-Click Edit • Space to Pan •
+                Delete to Remove
+              </span>
             </div>
           </div>
         </>

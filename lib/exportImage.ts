@@ -32,6 +32,7 @@ const GRAIN_CACHE_LIMIT = 12;
 const GRAIN_CACHE_MAX_PIXELS = 1_600_000;
 const GRAIN_INTENSITY_BUCKET_STEP = 2;
 const GRAIN_SIZE_BUCKET_STEP = 2;
+const CHROMA_STABILITY_MAX_DEVIATION = 172;
 const grainTextureCache = new Map<string, OffscreenCanvas | HTMLCanvasElement>();
 
 function toneMapFilmic(value: number) {
@@ -523,30 +524,33 @@ function applyCssFilterToCanvas(
 }
 
 function parseCssFilterString(filterString: string): ParsedCssFilter[] {
-  return Array.from(filterString.matchAll(/([a-z-]+)\(([^)]+)\)/g)).flatMap(
-    ([, rawType, rawValue]) => {
-      const value = parseCssFilterValue(rawType, rawValue);
+  const operations: ParsedCssFilter[] = [];
 
-      if (value === null) {
-        return [];
-      }
+  for (const [, rawType, rawValue] of filterString.matchAll(
+    /([a-z-]+)\(([^)]+)\)/g,
+  )) {
+    const value = parseCssFilterValue(rawType, rawValue);
 
-      if (rawType === "hue-rotate") {
-        return [{ type: rawType, value }];
-      }
+    if (value === null) {
+      continue;
+    }
 
-      if (
-        rawType === "brightness" ||
-        rawType === "contrast" ||
-        rawType === "saturate" ||
-        rawType === "sepia"
-      ) {
-        return [{ type: rawType, value }];
-      }
+    if (rawType === "hue-rotate") {
+      operations.push({ type: rawType, value });
+      continue;
+    }
 
-      return [];
-    },
-  );
+    if (
+      rawType === "brightness" ||
+      rawType === "contrast" ||
+      rawType === "saturate" ||
+      rawType === "sepia"
+    ) {
+      operations.push({ type: rawType, value });
+    }
+  }
+
+  return operations;
 }
 
 function parseCssFilterValue(type: string, rawValue: string): number | null {
@@ -659,6 +663,23 @@ function applyAdjustmentsToCanvas(
       b = clampByte(lum + (b - lum) * (1 + vibBoost));
     }
 
+    const lum = 0.213 * r + 0.715 * g + 0.072 * b;
+    const dr = r - lum;
+    const dg = g - lum;
+    const db = b - lum;
+    const chromaDeviation = Math.max(
+      Math.abs(dr),
+      Math.abs(dg),
+      Math.abs(db),
+    );
+
+    if (chromaDeviation > CHROMA_STABILITY_MAX_DEVIATION) {
+      const chromaScale = CHROMA_STABILITY_MAX_DEVIATION / chromaDeviation;
+      r = clampByte(lum + dr * chromaScale);
+      g = clampByte(lum + dg * chromaScale);
+      b = clampByte(lum + db * chromaScale);
+    }
+
     data[i] = r;
     data[i + 1] = g;
     data[i + 2] = b;
@@ -765,18 +786,23 @@ function applyUnsharpMask(
   const blurred = blurContext.getImageData(0, 0, w, h);
 
   for (let i = 0; i < original.data.length; i += 4) {
-    original.data[i] = clampByte(
-      original.data[i] +
-        (original.data[i] - blurred.data[i]) * amount,
-    );
-    original.data[i + 1] = clampByte(
-      original.data[i + 1] +
-        (original.data[i + 1] - blurred.data[i + 1]) * amount,
-    );
-    original.data[i + 2] = clampByte(
-      original.data[i + 2] +
-        (original.data[i + 2] - blurred.data[i + 2]) * amount,
-    );
+    const originalR = original.data[i];
+    const originalG = original.data[i + 1];
+    const originalB = original.data[i + 2];
+    const blurredR = blurred.data[i];
+    const blurredG = blurred.data[i + 1];
+    const blurredB = blurred.data[i + 2];
+
+    // Sharpen luminance only to avoid color fringing and blotchy chroma noise.
+    const originalLum =
+      0.213 * originalR + 0.715 * originalG + 0.072 * originalB;
+    const blurredLum =
+      0.213 * blurredR + 0.715 * blurredG + 0.072 * blurredB;
+    const lumDelta = (originalLum - blurredLum) * amount;
+
+    original.data[i] = clampByte(originalR + lumDelta);
+    original.data[i + 1] = clampByte(originalG + lumDelta);
+    original.data[i + 2] = clampByte(originalB + lumDelta);
   }
 
   ctx.putImageData(original, 0, 0);

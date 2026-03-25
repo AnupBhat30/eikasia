@@ -163,11 +163,11 @@ const LOOK_RENDER_RECIPE_OVERRIDES: Record<string, Partial<LookRenderRecipe>> = 
     ],
   },
   "colorplus-200": {
-    layerBlendMode: "overlay",
-    layerOpacity: 0.86,
+    layerBlendMode: "normal",
+    layerOpacity: 0.62,
     washes: [
-      wash("#ffaf5b", 0.09, "screen"),
-      wash("#cc6d32", 0.055, "soft-light"),
+      wash("#ffca9e", 0.024, "screen"),
+      wash("#b8815c", 0.012, "soft-light"),
     ],
   },
   "cinestill-800t": {
