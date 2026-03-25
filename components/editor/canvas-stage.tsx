@@ -58,6 +58,9 @@ interface CropBounds {
   bottom: number;
 }
 
+const CONTAINER_SIZE_JITTER_TOLERANCE_PX = 2;
+const CONTAINER_SIZE_SETTLE_MS = 80;
+
 export interface CanvasStageHandle {
   getElement: () => HTMLDivElement | null;
   deselectText: () => void;
@@ -65,6 +68,7 @@ export interface CanvasStageHandle {
 
 function useContainerSize(ref: React.RefObject<HTMLElement | null>) {
   const [size, setSize] = React.useState({ width: 0, height: 0 });
+  const previousSizeRef = React.useRef({ width: 0, height: 0 });
 
   React.useEffect(() => {
     const node = ref.current;
@@ -73,9 +77,55 @@ function useContainerSize(ref: React.RefObject<HTMLElement | null>) {
       return;
     }
 
+    let frame = 0;
+    let settleTimeout = 0;
+    let pendingSize: { width: number; height: number } | null = null;
+    const commitSize = (width: number, height: number) => {
+      const previous = previousSizeRef.current;
+
+      if (
+        Math.abs(previous.width - width) <=
+          CONTAINER_SIZE_JITTER_TOLERANCE_PX &&
+        Math.abs(previous.height - height) <= CONTAINER_SIZE_JITTER_TOLERANCE_PX
+      ) {
+        return;
+      }
+
+      previousSizeRef.current = { width, height };
+      setSize({ width, height });
+    };
+
+    const scheduleCommit = (width: number, height: number) => {
+      pendingSize = { width, height };
+
+      if (settleTimeout) {
+        window.clearTimeout(settleTimeout);
+      }
+
+      settleTimeout = window.setTimeout(() => {
+        settleTimeout = 0;
+
+        if (!pendingSize) {
+          return;
+        }
+
+        commitSize(pendingSize.width, pendingSize.height);
+        pendingSize = null;
+      }, CONTAINER_SIZE_SETTLE_MS);
+    };
+
     const update = () => {
-      const rect = node.getBoundingClientRect();
-      setSize({ width: rect.width, height: rect.height });
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const rect = node.getBoundingClientRect();
+        const width = Math.max(0, Math.round(rect.width));
+        const height = Math.max(0, Math.round(rect.height));
+        scheduleCommit(width, height);
+      });
     };
 
     update();
@@ -83,33 +133,42 @@ function useContainerSize(ref: React.RefObject<HTMLElement | null>) {
     const observer = new ResizeObserver(update);
     observer.observe(node);
 
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+      if (settleTimeout) {
+        window.clearTimeout(settleTimeout);
+      }
+    };
   }, [ref]);
 
   return size;
 }
 
 function fitStage(natural: StageSize | null, available: StageSize): StageSize {
-  const isCompactViewport = available.width < 760 || available.height < 760;
-  const minWidth = isCompactViewport ? 220 : 320;
-  const minHeight = isCompactViewport ? 160 : 220;
-  const horizontalPadding = isCompactViewport ? 28 : 96;
-  const verticalPadding = isCompactViewport ? 28 : 96;
+  const minSide = Math.min(available.width, available.height);
+  const compactness = clamp((760 - minSide) / 240, 0, 1);
+  const minWidth = Math.round(320 - 100 * compactness);
+  const minHeight = Math.round(220 - 60 * compactness);
+  const horizontalPadding = Math.round(96 - 68 * compactness);
+  const verticalPadding = Math.round(96 - 68 * compactness);
   const maxWidth = Math.max(available.width - horizontalPadding, minWidth);
   const maxHeight = Math.max(available.height - verticalPadding, minHeight);
 
   if (!natural || !natural.width || !natural.height) {
     return {
-      width: Math.min(isCompactViewport ? 720 : 960, maxWidth),
-      height: Math.min(isCompactViewport ? 520 : 620, maxHeight),
+      width: Math.round(Math.min(960 - 240 * compactness, maxWidth)),
+      height: Math.round(Math.min(620 - 100 * compactness, maxHeight)),
     };
   }
 
   const scale = Math.min(maxWidth / natural.width, maxHeight / natural.height);
 
   return {
-    width: Math.max(minWidth, natural.width * scale),
-    height: Math.max(minHeight, natural.height * scale),
+    width: Math.round(Math.max(minWidth, natural.width * scale)),
+    height: Math.round(Math.max(minHeight, natural.height * scale)),
   };
 }
 
@@ -718,7 +777,18 @@ export const CanvasStage = React.forwardRef<
 
   const queueViewport = React.useCallback(
     (nextViewport: { zoom: number; offsetX: number; offsetY: number }) => {
-      pendingViewportRef.current = nextViewport;
+      const normalizedZoom =
+        Math.abs(nextViewport.zoom - 1) < 0.01 ? 1 : nextViewport.zoom;
+      const finalViewport =
+        normalizedZoom === 1
+          ? { zoom: 1, offsetX: 0, offsetY: 0 }
+          : {
+              zoom: normalizedZoom,
+              offsetX: round(nextViewport.offsetX, 2),
+              offsetY: round(nextViewport.offsetY, 2),
+            };
+
+      pendingViewportRef.current = finalViewport;
 
       if (viewportRafRef.current) {
         return;
@@ -730,7 +800,14 @@ export const CanvasStage = React.forwardRef<
         pendingViewportRef.current = null;
 
         if (pendingViewport) {
-          setViewport(pendingViewport);
+          setViewport((previous) => {
+            const sameViewport =
+              Math.abs(previous.zoom - pendingViewport.zoom) < 0.001 &&
+              Math.abs(previous.offsetX - pendingViewport.offsetX) < 0.01 &&
+              Math.abs(previous.offsetY - pendingViewport.offsetY) < 0.01;
+
+            return sameViewport ? previous : pendingViewport;
+          });
         }
       });
     },
@@ -1293,10 +1370,22 @@ export const CanvasStage = React.forwardRef<
   }, []);
 
   const nudgeZoom = React.useCallback((delta: number) => {
-    setViewport((current) => ({
-      ...current,
-      zoom: clamp(round(current.zoom + delta, 2), 0.6, 2.6),
-    }));
+    setViewport((current) => {
+      let nextZoom = clamp(round(current.zoom + delta, 2), 0.6, 2.6);
+
+      if (Math.abs(nextZoom - 1.0) < 0.06) {
+        nextZoom = 1.0;
+      }
+
+      if (nextZoom === 1) {
+        return { zoom: 1, offsetX: 0, offsetY: 0 };
+      }
+
+      return {
+        ...current,
+        zoom: nextZoom,
+      };
+    });
   }, []);
 
   const handleViewportPointerDown = (
@@ -1313,9 +1402,10 @@ export const CanvasStage = React.forwardRef<
     }
 
     const currentViewport = latestViewportRef.current;
+    // Disable panning close to 1.0 zoom to prevent jitter
     const allowPointerPan =
       spacePressed ||
-      (event.pointerType === "touch" && currentViewport.zoom > 1.01);
+      (event.pointerType === "touch" && currentViewport.zoom > 1.05);
 
     if (!allowPointerPan) {
       return;
@@ -1336,16 +1426,24 @@ export const CanvasStage = React.forwardRef<
       return;
     }
 
+    // Allow browser zoom shortcuts (Ctrl/Cmd + wheel) to behave normally.
+    if (event.ctrlKey || event.metaKey) {
+      return;
+    }
+
     event.preventDefault();
 
     const currentViewport = latestViewportRef.current;
+    const zoomDelta = event.deltaY < 0 ? 0.08 : -0.08;
+    const nextZoom = clamp(
+      round(currentViewport.zoom + zoomDelta, 2),
+      0.6,
+      2.6,
+    );
+
     queueViewport({
       ...currentViewport,
-      zoom: clamp(
-        round(currentViewport.zoom + (event.deltaY < 0 ? 0.08 : -0.08), 2),
-        0.6,
-        2.6,
-      ),
+      zoom: nextZoom,
     });
   };
 
@@ -1399,6 +1497,7 @@ export const CanvasStage = React.forwardRef<
         0.6,
         2.6,
       );
+
       queueViewport({
         ...latestViewportRef.current,
         zoom: nextZoom,
@@ -1515,7 +1614,7 @@ export const CanvasStage = React.forwardRef<
 
           <div
             className={cn(
-              "relative flex items-center justify-center transition-transform duration-150 [will-change:transform]",
+              "relative flex items-center justify-center [will-change:transform]",
               project.imageSrc && spacePressed && "cursor-grab",
               panning && "cursor-grabbing",
             )}
@@ -1525,9 +1624,12 @@ export const CanvasStage = React.forwardRef<
             onTouchEnd={handleViewportTouchEnd}
             onTouchCancel={handleViewportTouchEnd}
             style={{
-              transform: `translate(${viewport.offsetX}px, ${viewport.offsetY}px) scale(${viewport.zoom})`,
+              transform: `translate3d(${Math.round(viewport.offsetX)}px, ${Math.round(viewport.offsetY)}px, 0) scale(${viewport.zoom})`,
               transformOrigin: "center center",
               touchAction: "none",
+              backfaceVisibility: "hidden",
+              WebkitFontSmoothing: "antialiased",
+              willChange: "transform",
             }}
           >
             <div
