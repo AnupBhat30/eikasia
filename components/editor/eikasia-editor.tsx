@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Image from "next/image";
 import {
   Crop,
   Download,
@@ -174,13 +175,22 @@ function EikasiaEditorShell() {
         <header className="border-b border-[var(--border)] bg-[rgba(10,10,10,0.88)] backdrop-blur-xl">
           <div className="grid min-h-20 grid-cols-1 items-center gap-3 px-3 py-3 sm:grid-cols-[1fr_auto] sm:gap-4 sm:px-4 sm:py-4 lg:grid-cols-[1fr_auto_1fr] xl:px-6">
             <div className="flex min-w-0 items-center justify-center gap-4 sm:justify-start">
-              <div>
-                <p className="font-logo text-[16px] uppercase tracking-[0.42em] text-[var(--text-primary)] sm:text-[18px] sm:tracking-[0.48em]">
-                  EIKASIA
-                </p>
-                <p className="mt-1 hidden text-[11px] uppercase tracking-[0.24em] text-[var(--text-muted)] sm:block">
-                  cinematic image editor
-                </p>
+              <div className="flex items-center gap-3">
+                <Image
+                  src="/favicon.svg"
+                  alt="Eikasia logo"
+                  width={36}
+                  height={36}
+                  className="size-8 rounded-sm border border-[var(--border)] bg-[rgba(255,255,255,0.02)] p-1 sm:size-9"
+                />
+                <div>
+                  <p className="font-logo text-[16px] uppercase tracking-[0.42em] text-[var(--text-primary)] sm:text-[18px] sm:tracking-[0.48em]">
+                    EIKASIA
+                  </p>
+                  <p className="mt-1 hidden text-[11px] uppercase tracking-[0.24em] text-[var(--text-muted)] sm:block">
+                    cinematic image editor
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -241,7 +251,9 @@ function EikasiaEditorShell() {
                 onClick={handleExport}
               >
                 <Download className="size-4" />
-                <span className="hidden sm:inline">{exporting ? "Rendering" : "Export"}</span>
+                <span className="hidden sm:inline">
+                  {exporting ? "Rendering" : "Export"}
+                </span>
               </Button>
 
               <Button
