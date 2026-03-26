@@ -302,8 +302,8 @@ function EikasiaEditorShell() {
           ) : null}
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 sm:grid-cols-[84px_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)_320px] xl:grid-cols-[260px_minmax(0,1fr)_320px]">
-          <aside className="hidden min-h-0 overflow-hidden border-r border-[var(--border)] bg-[rgba(20,20,20,0.96)] sm:block">
+        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[84px_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)_320px] xl:grid-cols-[260px_minmax(0,1fr)_320px]">
+          <aside className="hidden min-h-0 overflow-hidden border-r border-[var(--border)] bg-[rgba(20,20,20,0.96)] md:block">
             <div className="flex h-full min-h-0 flex-col">
               <div className="hidden px-5 pb-3 pt-5 lg:block">
                 <p className="text-[11px] uppercase tracking-[0.32em] text-[var(--text-muted)]">
@@ -375,7 +375,7 @@ function EikasiaEditorShell() {
           </aside>
         </div>
 
-        <nav className="border-t border-[var(--border)] bg-[rgba(14,14,14,0.96)] px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:hidden">
+        <nav className="border-t border-[var(--border)] bg-[rgba(14,14,14,0.96)] px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] md:hidden">
           <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {SIDEBAR_TABS.map((tab) => {
               const Icon = tab.icon;
