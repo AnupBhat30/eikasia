@@ -985,22 +985,22 @@ export const CanvasStage = React.forwardRef<
       isCoarsePointer && (isSmallViewport || isLowPowerDevice);
     const devicePixelRatio = window.devicePixelRatio || 1;
     const fullDpr = useMobileProfile
-      ? Math.min(devicePixelRatio, isHeavyGrain ? 1.2 : 1.3)
+      ? Math.min(devicePixelRatio, isHeavyGrain ? 1.8 : 2.2)
       : Math.min(devicePixelRatio, isHeavyGrain ? 1.35 : 1.5);
     const fastDpr = useMobileProfile
-      ? Math.min(fullDpr, isHeavyGrain ? 0.88 : 1.0)
+      ? Math.min(fullDpr, isHeavyGrain ? 1.4 : 1.8)
       : Math.min(fullDpr, isHeavyGrain ? 0.74 : 0.92);
     const fastBudget = useMobileProfile
       ? isHeavyGrain
-        ? 720_000
-        : 980_000
+        ? 1_200_000
+        : 1_800_000
       : isHeavyGrain
         ? 780_000
         : 1_080_000;
     const fullBudget = useMobileProfile
       ? isHeavyGrain
-        ? 1_200_000
-        : 1_600_000
+        ? 2_200_000
+        : 3_200_000
       : isHeavyGrain
         ? 1_420_000
         : 2_000_000;
