@@ -1,4 +1,6 @@
-import type { FontFamilyKey, ShadowPreset } from "@/components/editor/types";
+import { Shadow } from "fabric";
+import type { FontFamilyKey, ShadowPreset, TextLayer } from "@/components/editor/types";
+import { fromPercentage } from "@/lib/utils";
 
 export interface TextShadowStyle {
   color: string;
@@ -59,3 +61,73 @@ export function getTextShadowStyle(
       return null;
   }
 }
+
+export interface FabricTextboxOptions {
+  left: number;
+  top: number;
+  originX: "center";
+  originY: "center";
+  scaleX: number;
+  scaleY: number;
+  width: number;
+  fontSize: number;
+  text: string;
+  fontFamily: string;
+  fill: string;
+  opacity: number;
+  charSpacing: number;
+  lineHeight: number;
+  textAlign: string;
+  fontStyle: string;
+  fontWeight: string;
+  backgroundColor: string | undefined;
+}
+
+export function getFabricTextboxOptions(
+  layer: TextLayer,
+  canvasWidth: number,
+  canvasHeight: number,
+): FabricTextboxOptions {
+  const baseSize = canvasHeight;
+  const fontSize = fromPercentage(layer.fontSizePct, baseSize);
+
+  return {
+    left: fromPercentage(layer.xPct, canvasWidth),
+    top: fromPercentage(layer.yPct, canvasHeight),
+    originX: "center",
+    originY: "center",
+    scaleX: 1,
+    scaleY: 1,
+    width: fromPercentage(layer.widthPct, canvasWidth),
+    fontSize,
+    text: layer.text,
+    fontFamily: resolveTextFontFamily(layer.fontFamily),
+    fill: layer.color,
+    opacity: layer.opacity,
+    charSpacing: layer.letterSpacing,
+    lineHeight: layer.lineHeight,
+    textAlign: layer.textAlign,
+    fontStyle: layer.fontStyle,
+    fontWeight: layer.fontWeight,
+    backgroundColor: layer.backgroundColor ?? undefined,
+  };
+}
+
+export function createScaledTextShadow(
+  preset: ShadowPreset,
+  color: string,
+  scaleFactor: number = 1,
+): Shadow | null {
+  const shadow = getTextShadowStyle(preset, color);
+  if (!shadow) {
+    return null;
+  }
+
+  return new Shadow({
+    color: shadow.color,
+    blur: shadow.blur * scaleFactor,
+    offsetX: shadow.offsetX * scaleFactor,
+    offsetY: shadow.offsetY * scaleFactor,
+  });
+}
+

@@ -9,7 +9,7 @@ export const TAB_IDS = [
 ] as const;
 
 export type EditorTabId = (typeof TAB_IDS)[number];
-export type LookCategory = "fujifilm" | "analog" | "cinema" | "bw";
+export type LookCategory = "fujifilm" | "analog" | "cinema" | "bw" | "colorful" | "chroma";
 export type AcrosChannel = "neutral" | "red" | "yellow" | "green";
 export type ShadowPreset = "none" | "soft" | "hard" | "neon";
 export type BlendMode =
@@ -140,6 +140,8 @@ export type AdjustmentKey = keyof Adjustments;
 export interface ProjectState {
   imageSrc: string | null;
   imageName: string | null;
+  imageWidth: number | null;
+  imageHeight: number | null;
   activeLookId: string | null;
   filterIntensity: number;
   acrosChannel: AcrosChannel;

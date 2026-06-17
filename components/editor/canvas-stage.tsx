@@ -5,6 +5,7 @@ import { Canvas, Shadow, Textbox } from "fabric";
 import { Trash2, Upload } from "lucide-react";
 
 import {
+  ASPECT_RATIO_PRESETS,
   BLEND_MODE_OPTIONS,
   FONT_FAMILY_OPTIONS,
   SHADOW_PRESET_OPTIONS,
@@ -13,6 +14,7 @@ import {
 import { useEditor } from "@/components/editor/editor-context";
 import type {
   BlendMode,
+  CropPoint,
   FontFamilyKey,
   ProjectState,
   ShadowPreset,
@@ -32,7 +34,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { getTextShadowStyle, resolveTextFontFamily } from "@/lib/text-style";
+import {
+  createScaledTextShadow,
+  getFabricTextboxOptions,
+  resolveTextFontFamily,
+} from "@/lib/text-style";
 import { drawCoverImage, renderProjectRaster } from "@/lib/exportImage";
 import { clamp, cn, fromPercentage, round, toPercentage } from "@/lib/utils";
 
@@ -51,19 +57,13 @@ interface StageSize {
   height: number;
 }
 
-interface CropBounds {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
-
 const CONTAINER_SIZE_JITTER_TOLERANCE_PX = 2;
 const CONTAINER_SIZE_SETTLE_MS = 80;
 
 export interface CanvasStageHandle {
   getElement: () => HTMLDivElement | null;
   deselectText: () => void;
+  getStageSize: () => { width: number; height: number };
 }
 
 function useContainerSize(ref: React.RefObject<HTMLElement | null>) {
@@ -239,12 +239,6 @@ function pixelsToCharSpacing(pixels: number, fontSize: number) {
   return (pixels / fontSize) * 1000;
 }
 
-function createTextShadow(preset: ShadowPreset, color: string) {
-  const shadow = getTextShadowStyle(preset, color);
-
-  return shadow ? new Shadow(shadow) : null;
-}
-
 function inferShadowPreset(shadow?: Shadow | null): ShadowPreset {
   if (!shadow) {
     return "none";
@@ -281,30 +275,14 @@ function applyLayerToTextbox(
   layer: TextLayer,
   stageSize: StageSize,
 ) {
-  const baseSize = stageSize.height;
-  const fontSize = fromPercentage(layer.fontSizePct, baseSize);
+  const options = getFabricTextboxOptions(layer, stageSize.width, stageSize.height);
 
   textbox.set({
-    left: fromPercentage(layer.xPct, stageSize.width),
-    top: fromPercentage(layer.yPct, stageSize.height),
-    originX: "center",
-    originY: "center",
-    scaleX: 1,
-    scaleY: 1,
-    width: fromPercentage(layer.widthPct, stageSize.width),
-    fontSize,
-    text: layer.text,
-    fontFamily: resolveTextFontFamily(layer.fontFamily),
-    fill: layer.color,
-    opacity: layer.opacity,
-    charSpacing: layer.letterSpacing,
-    lineHeight: layer.lineHeight,
-    textAlign: layer.textAlign,
-    fontStyle: layer.fontStyle,
-    fontWeight: layer.fontWeight,
-    backgroundColor: layer.backgroundColor ?? undefined,
-    editable: true,
-    padding: Math.max(4, Math.round(fontSize * 0.05)),
+    ...options,
+    editable: false,
+    hoverCursor: "move",
+    moveCursor: "move",
+    padding: Math.max(4, Math.round(options.fontSize * 0.05)),
     lockScalingX: false,
     lockScalingY: false,
     lockRotation: true,
@@ -342,93 +320,9 @@ function applyLayerToTextbox(
     br: true,
     mtr: false,
   });
-  textbox.shadow = createTextShadow(layer.shadowPreset, layer.color);
+  textbox.shadow = createScaledTextShadow(layer.shadowPreset, layer.color, 1);
   textbox.globalCompositeOperation = blendModeToComposite(layer.blendMode);
   textbox.data = { layerId: layer.id };
-  textbox.setCoords();
-}
-
-function getCropBounds(
-  perspective: ReturnType<typeof useEditor>["project"]["crop"]["perspective"],
-  stageSize: StageSize,
-): CropBounds {
-  const points = [
-    perspective.tl,
-    perspective.tr,
-    perspective.br,
-    perspective.bl,
-  ];
-  const minX = Math.min(...points.map((point) => point.x));
-  const maxX = Math.max(...points.map((point) => point.x));
-  const minY = Math.min(...points.map((point) => point.y));
-  const maxY = Math.max(...points.map((point) => point.y));
-
-  return {
-    left: fromPercentage(minX, stageSize.width),
-    top: fromPercentage(minY, stageSize.height),
-    right: fromPercentage(maxX, stageSize.width),
-    bottom: fromPercentage(maxY, stageSize.height),
-  };
-}
-
-function snapTextboxToCropGuides(
-  textbox: EditorTextbox,
-  perspective: ReturnType<typeof useEditor>["project"]["crop"]["perspective"],
-  stageSize: StageSize,
-) {
-  const bounds = getCropBounds(perspective, stageSize);
-  const safePad = Math.max(
-    8,
-    Math.min(stageSize.width, stageSize.height) * 0.02,
-  );
-  const halfWidth = (textbox.getScaledWidth?.() ?? textbox.width ?? 0) / 2;
-  const halfHeight = (textbox.getScaledHeight?.() ?? textbox.height ?? 0) / 2;
-  const minX = bounds.left + halfWidth + safePad;
-  const maxX = bounds.right - halfWidth - safePad;
-  const minY = bounds.top + halfHeight + safePad;
-  const maxY = bounds.bottom - halfHeight - safePad;
-  const centerX = (bounds.left + bounds.right) / 2;
-  const centerY = (bounds.top + bounds.bottom) / 2;
-  const snapThreshold = Math.max(
-    8,
-    Math.min(stageSize.width, stageSize.height) * 0.018,
-  );
-
-  const snap = (value: number, targets: number[]) => {
-    let snapped = value;
-    let closestDistance = snapThreshold + 1;
-
-    targets.forEach((target) => {
-      const distance = Math.abs(value - target);
-
-      if (distance <= snapThreshold && distance < closestDistance) {
-        snapped = target;
-        closestDistance = distance;
-      }
-    });
-
-    return snapped;
-  };
-
-  const currentLeft = textbox.left ?? 0;
-  const currentTop = textbox.top ?? 0;
-  const nextLeft = snap(
-    currentLeft,
-    minX <= maxX ? [minX, centerX, maxX] : [centerX],
-  );
-  const nextTop = snap(
-    currentTop,
-    minY <= maxY ? [minY, centerY, maxY] : [centerY],
-  );
-
-  if (nextLeft === currentLeft && nextTop === currentTop) {
-    return;
-  }
-
-  textbox.set({
-    left: nextLeft,
-    top: nextTop,
-  } as never);
   textbox.setCoords();
 }
 
@@ -585,6 +479,282 @@ function FilmFrameIcon() {
   );
 }
 
+function mapScreenToImage(
+  screenXPct: number,
+  screenYPct: number,
+  rotation: number,
+  flipX: boolean,
+  flipY: boolean,
+): CropPoint {
+  let dx = screenXPct - 50;
+  let dy = screenYPct - 50;
+
+  if (flipX) dx = -dx;
+  if (flipY) dy = -dy;
+
+  const rad = (-rotation * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+
+  const rx = dx * cos - dy * sin;
+  const ry = dx * sin + dy * cos;
+
+  return {
+    x: rx + 50,
+    y: ry + 50,
+  };
+}
+
+function getConstrainedPerspective(
+  current: ProjectState["crop"]["perspective"],
+  draggedCorner: keyof ProjectState["crop"]["perspective"],
+  x: number,
+  y: number,
+  aspectRatio: number | null,
+) {
+  const minSize = 5;
+
+  if (aspectRatio === null) {
+    switch (draggedCorner) {
+      case "tl": {
+        const clampedX = clamp(x, 0, current.br.x - minSize);
+        const clampedY = clamp(y, 0, current.br.y - minSize);
+        return {
+          tl: { x: clampedX, y: clampedY },
+          tr: { x: current.tr.x, y: clampedY },
+          br: current.br,
+          bl: { x: clampedX, y: current.bl.y },
+        };
+      }
+      case "tr": {
+        const clampedX = clamp(x, current.bl.x + minSize, 100);
+        const clampedY = clamp(y, 0, current.bl.y - minSize);
+        return {
+          tl: { x: current.tl.x, y: clampedY },
+          tr: { x: clampedX, y: clampedY },
+          br: { x: clampedX, y: current.br.y },
+          bl: current.bl,
+        };
+      }
+      case "br": {
+        const clampedX = clamp(x, current.tl.x + minSize, 100);
+        const clampedY = clamp(y, current.tl.y + minSize, 100);
+        return {
+          tl: current.tl,
+          tr: { x: clampedX, y: current.tr.y },
+          br: { x: clampedX, y: clampedY },
+          bl: { x: current.bl.x, y: clampedY },
+        };
+      }
+      case "bl": {
+        const clampedX = clamp(x, 0, current.tr.x - minSize);
+        const clampedY = clamp(y, current.tr.y + minSize, 100);
+        return {
+          tl: { x: clampedX, y: current.tl.y },
+          tr: current.tr,
+          br: { x: current.br.x, y: clampedY },
+          bl: { x: clampedX, y: clampedY },
+        };
+      }
+    }
+  }
+
+  // Aspect-locked mode
+  let anchor: CropPoint;
+  let sgnX: number;
+  let sgnY: number;
+
+  switch (draggedCorner) {
+    case "tl":
+      anchor = current.br;
+      sgnX = -1;
+      sgnY = -1;
+      break;
+    case "tr":
+      anchor = current.bl;
+      sgnX = 1;
+      sgnY = -1;
+      break;
+    case "br":
+      anchor = current.tl;
+      sgnX = 1;
+      sgnY = 1;
+      break;
+    case "bl":
+      anchor = current.tr;
+      sgnX = -1;
+      sgnY = 1;
+      break;
+  }
+
+  const dx = x - anchor.x;
+  const dy = y - anchor.y;
+
+  const R = aspectRatio;
+  let t = (sgnX * R * dx + sgnY * dy) / (R * R + 1);
+
+  const tMaxX = sgnX > 0 ? (100 - anchor.x) / R : anchor.x / R;
+  const tMaxY = sgnY > 0 ? (100 - anchor.y) : anchor.y;
+  const tMax = Math.min(tMaxX, tMaxY);
+  const tMin = Math.max(minSize / R, minSize);
+
+  t = clamp(t, tMin, tMax);
+
+  const newX = anchor.x + t * sgnX * R;
+  const newY = anchor.y + t * sgnY;
+
+  switch (draggedCorner) {
+    case "tl":
+      return {
+        tl: { x: newX, y: newY },
+        tr: { x: anchor.x, y: newY },
+        br: anchor,
+        bl: { x: newX, y: anchor.y },
+      };
+    case "tr":
+      return {
+        tl: { x: anchor.x, y: newY },
+        tr: { x: newX, y: newY },
+        br: { x: newX, y: anchor.y },
+        bl: anchor,
+      };
+    case "br":
+      return {
+        tl: anchor,
+        tr: { x: newX, y: anchor.y },
+        br: { x: newX, y: newY },
+        bl: { x: anchor.x, y: newY },
+      };
+    case "bl":
+      return {
+        tl: { x: newX, y: anchor.y },
+        tr: anchor,
+        br: { x: anchor.x, y: newY },
+        bl: { x: newX, y: newY },
+      };
+  }
+}
+
+function getConstrainedPerspectiveForEdge(
+  current: ProjectState["crop"]["perspective"],
+  draggedEdge: "top" | "right" | "bottom" | "left",
+  x: number,
+  y: number,
+  aspectRatio: number | null,
+) {
+  const minSize = 5;
+
+  if (aspectRatio === null) {
+    switch (draggedEdge) {
+      case "top": {
+        const clampedY = clamp(y, 0, current.bl.y - minSize);
+        return {
+          tl: { x: current.tl.x, y: clampedY },
+          tr: { x: current.tr.x, y: clampedY },
+          br: current.br,
+          bl: current.bl,
+        };
+      }
+      case "bottom": {
+        const clampedY = clamp(y, current.tl.y + minSize, 100);
+        return {
+          tl: current.tl,
+          tr: current.tr,
+          br: { x: current.br.x, y: clampedY },
+          bl: { x: current.bl.x, y: clampedY },
+        };
+      }
+      case "left": {
+        const clampedX = clamp(x, 0, current.tr.x - minSize);
+        return {
+          tl: { x: clampedX, y: current.tl.y },
+          tr: current.tr,
+          br: current.br,
+          bl: { x: clampedX, y: current.bl.y },
+        };
+      }
+      case "right": {
+        const clampedX = clamp(x, current.tl.x + minSize, 100);
+        return {
+          tl: current.tl,
+          tr: { x: clampedX, y: current.tr.y },
+          br: { x: clampedX, y: current.br.y },
+          bl: current.bl,
+        };
+      }
+    }
+  }
+
+  // Aspect-locked mode
+  const R = aspectRatio;
+  switch (draggedEdge) {
+    case "top": {
+      const y0 = current.bl.y;
+      const cx = (current.tl.x + current.tr.x) / 2;
+      let h = y0 - y;
+      const hMax = Math.min(y0, (2 * cx) / R, (2 * (100 - cx)) / R);
+      const hMin = Math.max(minSize, minSize / R);
+      h = clamp(h, hMin, hMax);
+      const newY = y0 - h;
+      const hw = (h * R) / 2;
+      return {
+        tl: { x: cx - hw, y: newY },
+        tr: { x: cx + hw, y: newY },
+        br: { x: cx + hw, y: y0 },
+        bl: { x: cx - hw, y: y0 },
+      };
+    }
+    case "bottom": {
+      const y0 = current.tl.y;
+      const cx = (current.tl.x + current.tr.x) / 2;
+      let h = y - y0;
+      const hMax = Math.min(100 - y0, (2 * cx) / R, (2 * (100 - cx)) / R);
+      const hMin = Math.max(minSize, minSize / R);
+      h = clamp(h, hMin, hMax);
+      const newY = y0 + h;
+      const hw = (h * R) / 2;
+      return {
+        tl: { x: cx - hw, y: y0 },
+        tr: { x: cx + hw, y: y0 },
+        br: { x: cx + hw, y: newY },
+        bl: { x: cx - hw, y: newY },
+      };
+    }
+    case "left": {
+      const x0 = current.tr.x;
+      const cy = (current.tl.y + current.bl.y) / 2;
+      let w = x0 - x;
+      const wMax = Math.min(x0, 2 * cy * R, 2 * (100 - cy) * R);
+      const wMin = Math.max(minSize, minSize * R);
+      w = clamp(w, wMin, wMax);
+      const newX = x0 - w;
+      const hh = (w / R) / 2;
+      return {
+        tl: { x: newX, y: cy - hh },
+        tr: { x: x0, y: cy - hh },
+        br: { x: x0, y: cy + hh },
+        bl: { x: newX, y: cy + hh },
+      };
+    }
+    case "right": {
+      const x0 = current.tl.x;
+      const cy = (current.tl.y + current.bl.y) / 2;
+      let w = x - x0;
+      const wMax = Math.min(100 - x0, 2 * cy * R, 2 * (100 - cy) * R);
+      const wMin = Math.max(minSize, minSize * R);
+      w = clamp(w, wMin, wMax);
+      const newX = x0 + w;
+      const hh = (w / R) / 2;
+      return {
+        tl: { x: x0, y: cy - hh },
+        tr: { x: newX, y: cy - hh },
+        br: { x: newX, y: cy + hh },
+        bl: { x: x0, y: cy + hh },
+      };
+    }
+  }
+}
+
 export const CanvasStage = React.forwardRef<
   CanvasStageHandle,
   {
@@ -601,6 +771,7 @@ export const CanvasStage = React.forwardRef<
     updateTextLayer,
     removeTextLayer,
     setCropPerspective,
+    setImageDimensions,
   } = useEditor();
 
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -610,6 +781,9 @@ export const CanvasStage = React.forwardRef<
   const fabricCanvasRef = React.useRef<Canvas | null>(null);
   const isSyncingRef = React.useRef(false);
   const latestPerspectiveRef = React.useRef(project.crop.perspective);
+  React.useEffect(() => {
+    latestPerspectiveRef.current = project.crop.perspective;
+  }, [project.crop.perspective]);
   const latestTextLayersRef = React.useRef(project.textLayers);
   const panOriginRef = React.useRef<{
     x: number;
@@ -625,15 +799,28 @@ export const CanvasStage = React.forwardRef<
   const [dragCorner, setDragCorner] = React.useState<
     keyof typeof project.crop.perspective | null
   >(null);
+  const [dragEdge, setDragEdge] = React.useState<
+    "top" | "right" | "bottom" | "left" | null
+  >(null);
+  const [isMovingCropBox, setIsMovingCropBox] = React.useState(false);
+  const cropBoxDragStartRef = React.useRef<{
+    pointerX: number;
+    pointerY: number;
+    perspective: typeof project.crop.perspective;
+  } | null>(null);
   const [draftPerspective, setDraftPerspective] = React.useState<
     typeof project.crop.perspective | null
   >(null);
+  const draftPerspectiveRef = React.useRef<typeof project.crop.perspective | null>(null);
   const [viewport, setViewport] = React.useState({
     zoom: 1,
     offsetX: 0,
     offsetY: 0,
   });
   const [editingTextId, setEditingTextId] = React.useState<string | null>(null);
+  const [draftTextLayerUpdates, setDraftTextLayerUpdates] = React.useState<
+    Record<string, Partial<TextLayer>>
+  >({});
   const [spacePressed, setSpacePressed] = React.useState(false);
   const [panning, setPanning] = React.useState(false);
   const touchPanOriginRef = React.useRef<{
@@ -653,6 +840,7 @@ export const CanvasStage = React.forwardRef<
     offsetY: number;
   } | null>(null);
   const latestViewportRef = React.useRef(viewport);
+  const latestActiveTabRef = React.useRef(activeTab);
 
   const containerSize = useContainerSize(containerRef);
   const stageSize = React.useMemo(
@@ -708,6 +896,13 @@ export const CanvasStage = React.forwardRef<
 
   const displayedPerspective = draftPerspective ?? project.crop.perspective;
 
+  const startCropDrag = React.useCallback(() => {
+    const cloned = structuredClone(project.crop.perspective);
+    draftPerspectiveRef.current = cloned;
+    latestPerspectiveRef.current = cloned;
+    setDraftPerspective(cloned);
+  }, [project.crop.perspective]);
+
   const exitCanvasTextEditing = React.useCallback(() => {
     const canvas = fabricCanvasRef.current;
 
@@ -746,13 +941,13 @@ export const CanvasStage = React.forwardRef<
         canvas.discardActiveObject();
         canvas.requestRenderAll();
       },
+      getStageSize: () => ({
+        width: latestStageSizeRef.current.width,
+        height: latestStageSizeRef.current.height,
+      }),
     }),
     [exitCanvasTextEditing],
   );
-
-  React.useEffect(() => {
-    latestPerspectiveRef.current = displayedPerspective;
-  }, [displayedPerspective]);
 
   React.useEffect(() => {
     latestTextLayersRef.current = project.textLayers;
@@ -765,6 +960,10 @@ export const CanvasStage = React.forwardRef<
   React.useEffect(() => {
     latestViewportRef.current = viewport;
   }, [viewport]);
+
+  React.useEffect(() => {
+    latestActiveTabRef.current = activeTab;
+  }, [activeTab]);
 
   React.useEffect(
     () => () => {
@@ -939,13 +1138,14 @@ export const CanvasStage = React.forwardRef<
         height: image.naturalHeight,
       });
       setSourceImage(image);
+      setImageDimensions(image.naturalWidth, image.naturalHeight);
     };
     image.src = project.imageSrc;
 
     return () => {
       cancelled = true;
     };
-  }, [project.imageSrc]);
+  }, [project.imageSrc, setImageDimensions]);
 
   React.useEffect(() => {
     const previewCanvas = previewCanvasRef.current;
@@ -1077,7 +1277,23 @@ export const CanvasStage = React.forwardRef<
       selectionColor: "rgba(245,158,11,0.08)",
       selectionBorderColor: "#f59e0b",
       backgroundColor: "transparent",
+      containerClass: "fabric-text-canvas",
     });
+
+    canvas.wrapperEl.style.position = "absolute";
+    canvas.wrapperEl.style.inset = "0";
+    canvas.wrapperEl.style.width = "100%";
+    canvas.wrapperEl.style.height = "100%";
+    canvas.wrapperEl.style.zIndex = "10";
+    canvas.wrapperEl.style.pointerEvents = "auto";
+    canvas.wrapperEl.style.opacity =
+      latestActiveTabRef.current === "text" ? "0" : "1";
+    canvas.upperCanvasEl.style.pointerEvents = "auto";
+    canvas.upperCanvasEl.style.position = "absolute";
+    canvas.upperCanvasEl.style.inset = "0";
+    canvas.lowerCanvasEl.style.pointerEvents = "none";
+    canvas.lowerCanvasEl.style.position = "absolute";
+    canvas.lowerCanvasEl.style.inset = "0";
 
     const updateSelection = () => {
       const activeObject = canvas.getActiveObject() as EditorTextbox | null;
@@ -1115,7 +1331,6 @@ export const CanvasStage = React.forwardRef<
     const handleObjectMoving = (event: { target?: unknown }) => {
       const target = event.target as EditorTextbox | null | undefined;
       const currentStageSize = latestStageSizeRef.current;
-      const currentPerspective = latestPerspectiveRef.current;
 
       if (!target || target.type !== "textbox") {
         return;
@@ -1125,14 +1340,12 @@ export const CanvasStage = React.forwardRef<
         return;
       }
 
-      snapTextboxToCropGuides(target, currentPerspective, currentStageSize);
       keepTextboxPartiallyVisible(target, currentStageSize);
     };
 
     const handleObjectScaling = (event: { target?: unknown }) => {
       const target = event.target as EditorTextbox | null | undefined;
       const currentStageSize = latestStageSizeRef.current;
-      const currentPerspective = latestPerspectiveRef.current;
 
       if (!target || target.type !== "textbox") {
         return;
@@ -1142,10 +1355,25 @@ export const CanvasStage = React.forwardRef<
         return;
       }
 
-      normalizeTextboxScale(target);
-      snapTextboxToCropGuides(target, currentPerspective, currentStageSize);
       keepTextboxPartiallyVisible(target, currentStageSize);
-      canvas.requestRenderAll();
+    };
+
+    const handleObjectModified = (event: { target?: unknown }) => {
+      const target = event.target as EditorTextbox | null | undefined;
+      const currentStageSize = latestStageSizeRef.current;
+
+      if (
+        target &&
+        target.type === "textbox" &&
+        currentStageSize.width &&
+        currentStageSize.height
+      ) {
+        normalizeTextboxScale(target);
+        keepTextboxPartiallyVisible(target, currentStageSize);
+        canvas.requestRenderAll();
+      }
+
+      commitLayers();
     };
 
     const handleSelectionCleared = () => {
@@ -1158,22 +1386,20 @@ export const CanvasStage = React.forwardRef<
     canvas.on("selection:updated", updateSelection);
     canvas.on("selection:cleared", handleSelectionCleared);
     canvas.on("mouse:dblclick", openTextControls);
-    canvas.on("text:editing:entered", openTextControls);
-    canvas.on("text:editing:exited", commitLayers);
     canvas.on("object:moving", handleObjectMoving);
     canvas.on("object:scaling", handleObjectScaling);
-    canvas.on("object:modified", commitLayers);
-    canvas.on("text:changed", commitLayers);
+    canvas.on("object:modified", handleObjectModified);
 
     fabricCanvasRef.current = canvas;
 
     return () => {
+      canvas.off("selection:created", updateSelection);
+      canvas.off("selection:updated", updateSelection);
       canvas.off("selection:cleared", handleSelectionCleared);
       canvas.off("object:moving", handleObjectMoving);
       canvas.off("object:scaling", handleObjectScaling);
+      canvas.off("object:modified", handleObjectModified);
       canvas.off("mouse:dblclick", openTextControls);
-      canvas.off("text:editing:entered", openTextControls);
-      canvas.off("text:editing:exited", commitLayers);
       canvas.dispose();
       fabricCanvasRef.current = null;
     };
@@ -1191,6 +1417,17 @@ export const CanvasStage = React.forwardRef<
       width: stageSize.width,
       height: stageSize.height,
     });
+    // Explicitly sync CSS px dimensions so Fabric's getPointer() coordinate
+    // mapping is correct (CSS size must equal canvas pixel size).
+    const pxW = `${stageSize.width}px`;
+    const pxH = `${stageSize.height}px`;
+    canvas.wrapperEl.style.width = pxW;
+    canvas.wrapperEl.style.height = pxH;
+    canvas.upperCanvasEl.style.width = pxW;
+    canvas.upperCanvasEl.style.height = pxH;
+    canvas.lowerCanvasEl.style.width = pxW;
+    canvas.lowerCanvasEl.style.height = pxH;
+    canvas.calcOffset();
 
     const objectMap = new Map(
       canvas
@@ -1224,6 +1461,24 @@ export const CanvasStage = React.forwardRef<
       }
     });
 
+    canvas.requestRenderAll();
+    isSyncingRef.current = false;
+  }, [project.crop.perspective, project.textLayers, stageSize]);
+
+  React.useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+
+    if (!canvas) {
+      return;
+    }
+
+    const currentActiveObject = canvas.getActiveObject() as EditorTextbox | null;
+    const currentLayerId = currentActiveObject?.data?.layerId ?? null;
+
+    if (currentLayerId === selectedTextId) {
+      return;
+    }
+
     if (selectedTextId) {
       const activeObject = canvas
         .getObjects()
@@ -1243,8 +1498,41 @@ export const CanvasStage = React.forwardRef<
     }
 
     canvas.requestRenderAll();
-    isSyncingRef.current = false;
-  }, [project.crop.perspective, project.textLayers, selectedTextId, stageSize]);
+  }, [selectedTextId]);
+
+  React.useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+
+    if (!canvas) {
+      return;
+    }
+
+    const pointerEvents = activeTab === "text" ? "none" : "auto";
+    canvas.wrapperEl.style.pointerEvents = pointerEvents;
+    canvas.upperCanvasEl.style.pointerEvents = pointerEvents;
+    canvas.wrapperEl.style.opacity = activeTab === "text" ? "0" : "1";
+  }, [activeTab]);
+
+  const handleCropBoxPointerDown = (event: React.PointerEvent) => {
+    event.preventDefault();
+    const stageNode = captureRef.current;
+    if (!stageNode) return;
+
+    const rect = stageNode.getBoundingClientRect();
+    const screenXPct = ((event.clientX - rect.left) / rect.width) * 100;
+    const screenYPct = ((event.clientY - rect.top) / rect.height) * 100;
+
+    const cloned = structuredClone(project.crop.perspective);
+    cropBoxDragStartRef.current = {
+      pointerX: screenXPct,
+      pointerY: screenYPct,
+      perspective: cloned,
+    };
+    draftPerspectiveRef.current = cloned;
+    latestPerspectiveRef.current = cloned;
+    setDraftPerspective(cloned);
+    setIsMovingCropBox(true);
+  };
 
   React.useEffect(() => {
     if (!dragCorner) {
@@ -1259,17 +1547,36 @@ export const CanvasStage = React.forwardRef<
       }
 
       const rect = stageNode.getBoundingClientRect();
-      const x = clamp(((event.clientX - rect.left) / rect.width) * 100, 0, 100);
-      const y = clamp(((event.clientY - rect.top) / rect.height) * 100, 0, 100);
+      const screenXPct = ((event.clientX - rect.left) / rect.width) * 100;
+      const screenYPct = ((event.clientY - rect.top) / rect.height) * 100;
 
-      setDraftPerspective((current) =>
-        current
-          ? {
-              ...current,
-              [dragCorner]: { x, y },
-            }
-          : current,
+      // Map to local unrotated image space
+      const localPt = mapScreenToImage(
+        screenXPct,
+        screenYPct,
+        project.crop.rotation,
+        project.crop.flipX,
+        project.crop.flipY
       );
+
+      const activePreset = ASPECT_RATIO_PRESETS.find(
+        (p) => p.id === project.crop.presetId
+      );
+      const ratioValue = activePreset?.value ?? null;
+
+      const current = draftPerspectiveRef.current;
+      if (current) {
+        const next = getConstrainedPerspective(
+          current,
+          dragCorner,
+          localPt.x,
+          localPt.y,
+          ratioValue
+        );
+        draftPerspectiveRef.current = next;
+        latestPerspectiveRef.current = next;
+        setDraftPerspective(next);
+      }
     };
 
     const handleUp = () => {
@@ -1279,6 +1586,7 @@ export const CanvasStage = React.forwardRef<
         setCropPerspective(latestPerspectiveRef.current);
       }
 
+      draftPerspectiveRef.current = null;
       setDraftPerspective(null);
     };
 
@@ -1289,7 +1597,195 @@ export const CanvasStage = React.forwardRef<
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
     };
-  }, [dragCorner, setCropPerspective]);
+  }, [
+    dragCorner,
+    setCropPerspective,
+    project.crop.presetId,
+    project.crop.rotation,
+    project.crop.flipX,
+    project.crop.flipY,
+  ]);
+
+  React.useEffect(() => {
+    if (!dragEdge) {
+      return;
+    }
+
+    const handleMove = (event: PointerEvent) => {
+      const stageNode = captureRef.current;
+
+      if (!stageNode) {
+        return;
+      }
+
+      const rect = stageNode.getBoundingClientRect();
+      const screenXPct = ((event.clientX - rect.left) / rect.width) * 100;
+      const screenYPct = ((event.clientY - rect.top) / rect.height) * 100;
+
+      // Map to local unrotated image space
+      const localPt = mapScreenToImage(
+        screenXPct,
+        screenYPct,
+        project.crop.rotation,
+        project.crop.flipX,
+        project.crop.flipY
+      );
+
+      const activePreset = ASPECT_RATIO_PRESETS.find(
+        (p) => p.id === project.crop.presetId
+      );
+      const ratioValue = activePreset?.value ?? null;
+
+      const current = draftPerspectiveRef.current;
+      if (current) {
+        const next = getConstrainedPerspectiveForEdge(
+          current,
+          dragEdge,
+          localPt.x,
+          localPt.y,
+          ratioValue
+        );
+        draftPerspectiveRef.current = next;
+        latestPerspectiveRef.current = next;
+        setDraftPerspective(next);
+      }
+    };
+
+    const handleUp = () => {
+      setDragEdge(null);
+
+      if (latestPerspectiveRef.current) {
+        setCropPerspective(latestPerspectiveRef.current);
+      }
+
+      draftPerspectiveRef.current = null;
+      setDraftPerspective(null);
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp, { once: true });
+
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+  }, [
+    dragEdge,
+    setCropPerspective,
+    project.crop.presetId,
+    project.crop.rotation,
+    project.crop.flipX,
+    project.crop.flipY,
+  ]);
+
+  React.useEffect(() => {
+    if (!isMovingCropBox) {
+      return;
+    }
+
+    const handleMove = (event: PointerEvent) => {
+      const start = cropBoxDragStartRef.current;
+      const stageNode = captureRef.current;
+
+      if (!start || !stageNode) {
+        return;
+      }
+
+      const rect = stageNode.getBoundingClientRect();
+      const screenXPct = ((event.clientX - rect.left) / rect.width) * 100;
+      const screenYPct = ((event.clientY - rect.top) / rect.height) * 100;
+
+      // Map current cursor to local space
+      const localPt = mapScreenToImage(
+        screenXPct,
+        screenYPct,
+        project.crop.rotation,
+        project.crop.flipX,
+        project.crop.flipY
+      );
+
+      // Map start cursor to local space
+      const startLocalPt = mapScreenToImage(
+        start.pointerX,
+        start.pointerY,
+        project.crop.rotation,
+        project.crop.flipX,
+        project.crop.flipY
+      );
+
+      const dxPct = localPt.x - startLocalPt.x;
+      const dyPct = localPt.y - startLocalPt.y;
+
+      const xs = [
+        start.perspective.tl.x,
+        start.perspective.tr.x,
+        start.perspective.br.x,
+        start.perspective.bl.x,
+      ];
+      const ys = [
+        start.perspective.tl.y,
+        start.perspective.tr.y,
+        start.perspective.br.y,
+        start.perspective.bl.y,
+      ];
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+
+      const clampedDx = clamp(dxPct, -minX, 100 - maxX);
+      const clampedDy = clamp(dyPct, -minY, 100 - maxY);
+
+      const next = {
+        tl: {
+          x: start.perspective.tl.x + clampedDx,
+          y: start.perspective.tl.y + clampedDy,
+        },
+        tr: {
+          x: start.perspective.tr.x + clampedDx,
+          y: start.perspective.tr.y + clampedDy,
+        },
+        br: {
+          x: start.perspective.br.x + clampedDx,
+          y: start.perspective.br.y + clampedDy,
+        },
+        bl: {
+          x: start.perspective.bl.x + clampedDx,
+          y: start.perspective.bl.y + clampedDy,
+        },
+      };
+
+      draftPerspectiveRef.current = next;
+      latestPerspectiveRef.current = next;
+      setDraftPerspective(next);
+    };
+
+    const handleUp = () => {
+      setIsMovingCropBox(false);
+      cropBoxDragStartRef.current = null;
+
+      if (latestPerspectiveRef.current) {
+        setCropPerspective(latestPerspectiveRef.current);
+      }
+
+      draftPerspectiveRef.current = null;
+      setDraftPerspective(null);
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp, { once: true });
+
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+  }, [
+    isMovingCropBox,
+    setCropPerspective,
+    project.crop.rotation,
+    project.crop.flipX,
+    project.crop.flipY,
+  ]);
 
   React.useEffect(() => {
     if (!panning) {
@@ -1361,6 +1857,149 @@ export const CanvasStage = React.forwardRef<
     setEditingTextId(selectedTextId);
   };
 
+  const getVisibleTextLayer = React.useCallback(
+    (layer: TextLayer): TextLayer => ({
+      ...layer,
+      ...draftTextLayerUpdates[layer.id],
+    }),
+    [draftTextLayerUpdates],
+  );
+
+  const commitTextLayerDraft = React.useCallback(
+    (layerId: string, updates: Partial<TextLayer>) => {
+      setDraftTextLayerUpdates((current) => {
+        const next = { ...current };
+        delete next[layerId];
+        return next;
+      });
+
+      if (!Object.keys(updates).length) {
+        return;
+      }
+
+      updateTextLayer(layerId, updates);
+    },
+    [updateTextLayer],
+  );
+
+  const startTextLayerMove = React.useCallback(
+    (event: React.PointerEvent<HTMLDivElement>, layer: TextLayer) => {
+      if (!stageSize.width || !stageSize.height) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      setSelectedTextId(layer.id);
+      setEditingTextId(null);
+
+      const stageNode = captureRef.current;
+
+      if (!stageNode) {
+        return;
+      }
+
+      const rect = stageNode.getBoundingClientRect();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startLayer = getVisibleTextLayer(layer);
+      let nextUpdates: Partial<TextLayer> = {};
+
+      const handleMove = (moveEvent: PointerEvent) => {
+        moveEvent.preventDefault();
+        const dxPct = ((moveEvent.clientX - startX) / rect.width) * 100;
+        const dyPct = ((moveEvent.clientY - startY) / rect.height) * 100;
+        nextUpdates = {
+          xPct: clamp(startLayer.xPct + dxPct, 0, 100),
+          yPct: clamp(startLayer.yPct + dyPct, 0, 100),
+        };
+
+        setDraftTextLayerUpdates((current) => ({
+          ...current,
+          [layer.id]: {
+            ...current[layer.id],
+            ...nextUpdates,
+          },
+        }));
+      };
+
+      const handleUp = () => {
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+        commitTextLayerDraft(layer.id, nextUpdates);
+      };
+
+      window.addEventListener("pointermove", handleMove);
+      window.addEventListener("pointerup", handleUp, { once: true });
+    },
+    [
+      commitTextLayerDraft,
+      getVisibleTextLayer,
+      setSelectedTextId,
+      stageSize.height,
+      stageSize.width,
+    ],
+  );
+
+  const startTextLayerResize = React.useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>, layer: TextLayer) => {
+      if (!stageSize.width || !stageSize.height) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      setSelectedTextId(layer.id);
+      setEditingTextId(null);
+
+      const stageNode = captureRef.current;
+
+      if (!stageNode) {
+        return;
+      }
+
+      const rect = stageNode.getBoundingClientRect();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startLayer = getVisibleTextLayer(layer);
+      let nextUpdates: Partial<TextLayer> = {};
+
+      const handleMove = (moveEvent: PointerEvent) => {
+        moveEvent.preventDefault();
+        const dxPct = ((moveEvent.clientX - startX) / rect.width) * 100;
+        const dyPct = ((moveEvent.clientY - startY) / rect.height) * 100;
+        nextUpdates = {
+          widthPct: clamp(startLayer.widthPct + dxPct * 2, 8, 100),
+          fontSizePct: clamp(startLayer.fontSizePct + dyPct, 1.2, 42),
+        };
+
+        setDraftTextLayerUpdates((current) => ({
+          ...current,
+          [layer.id]: {
+            ...current[layer.id],
+            ...nextUpdates,
+          },
+        }));
+      };
+
+      const handleUp = () => {
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+        commitTextLayerDraft(layer.id, nextUpdates);
+      };
+
+      window.addEventListener("pointermove", handleMove);
+      window.addEventListener("pointerup", handleUp, { once: true });
+    },
+    [
+      commitTextLayerDraft,
+      getVisibleTextLayer,
+      setSelectedTextId,
+      stageSize.height,
+      stageSize.width,
+    ],
+  );
+
   const resetViewport = React.useCallback(() => {
     setViewport({
       zoom: 1,
@@ -1396,6 +2035,10 @@ export const CanvasStage = React.forwardRef<
     }
 
     const target = event.target as HTMLElement;
+
+    if (target.closest(".fabric-text-canvas")) {
+      return;
+    }
 
     if (target.closest("button, input, textarea, select, label")) {
       return;
@@ -1455,6 +2098,10 @@ export const CanvasStage = React.forwardRef<
     }
 
     const target = event.target as HTMLElement;
+    if (target.closest(".fabric-text-canvas")) {
+      return;
+    }
+
     if (target.closest("button, input, textarea, select, label")) {
       return;
     }
@@ -1648,51 +2295,279 @@ export const CanvasStage = React.forwardRef<
                       className="absolute inset-0 z-0 h-full w-full"
                     />
                   </div>
+
+                  <canvas
+                    ref={canvasRef}
+                    className="absolute inset-0 z-10 h-full w-full"
+                  />
+
+                  {activeTab === "text" ? (
+                    <div className="absolute inset-0 z-20">
+                      {project.textLayers.map((layer) => {
+                        const visibleLayer = getVisibleTextLayer(layer);
+                        const fontSize = fromPercentage(
+                          visibleLayer.fontSizePct,
+                          stageSize.height,
+                        );
+                        const isSelected = selectedTextId === layer.id;
+
+                        return (
+                          <div
+                            key={layer.id}
+                            role="button"
+                            tabIndex={0}
+                            onPointerDown={(event) =>
+                              startTextLayerMove(event, layer)
+                            }
+                            onDoubleClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setSelectedTextId(layer.id);
+                              setEditingTextId(layer.id);
+                            }}
+                            className={cn(
+                              "absolute -translate-x-1/2 -translate-y-1/2 cursor-move select-none border border-dashed px-1 py-0.5 outline-none touch-none",
+                              isSelected
+                                ? "border-[var(--accent)] bg-[rgba(245,158,11,0.08)]"
+                                : "border-transparent hover:border-[rgba(245,158,11,0.55)]",
+                            )}
+                            style={{
+                              left: `${visibleLayer.xPct}%`,
+                              top: `${visibleLayer.yPct}%`,
+                              width: `${visibleLayer.widthPct}%`,
+                              color: visibleLayer.color,
+                              opacity: visibleLayer.opacity,
+                              fontFamily: resolveTextFontFamily(
+                                visibleLayer.fontFamily,
+                              ),
+                              fontSize,
+                              fontStyle: visibleLayer.fontStyle,
+                              fontWeight: visibleLayer.fontWeight,
+                              letterSpacing: charSpacingToPixels(
+                                visibleLayer.letterSpacing,
+                                fontSize,
+                              ),
+                              lineHeight: visibleLayer.lineHeight,
+                              textAlign: visibleLayer.textAlign,
+                              whiteSpace: "pre-wrap",
+                              overflowWrap: "break-word",
+                              textShadow: "none",
+                            }}
+                          >
+                            {visibleLayer.text}
+                            {isSelected ? (
+                              <button
+                                type="button"
+                                aria-label="Resize text"
+                                onPointerDown={(event) =>
+                                  startTextLayerResize(event, layer)
+                                }
+                                className="absolute -bottom-2 -right-2 size-4 cursor-nwse-resize border border-black bg-[var(--accent)] shadow-[0_0_0_1px_rgba(245,158,11,0.35)]"
+                              />
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                 </div>
 
-                <canvas
-                  ref={canvasRef}
-                  className="absolute inset-0 z-10 h-full w-full"
-                />
-              </div>
+                {activeTab === "crop" ? (
+                  <div className="absolute inset-0 z-20">
+                    <svg
+                      className="absolute inset-0 h-full w-full"
+                      viewBox="0 0 100 100"
+                      preserveAspectRatio="none"
+                    >
+                      {/* Draggable crop box interior */}
+                      <polygon
+                        points={`${displayedPerspective.tl.x},${displayedPerspective.tl.y} ${displayedPerspective.tr.x},${displayedPerspective.tr.y} ${displayedPerspective.br.x},${displayedPerspective.br.y} ${displayedPerspective.bl.x},${displayedPerspective.bl.y}`}
+                        fill="rgba(245, 158, 11, 0.05)"
+                        className="pointer-events-auto cursor-move"
+                        onPointerDown={handleCropBoxPointerDown}
+                      />
 
-              {activeTab === "crop" ? (
-                <div className="absolute inset-0 z-20">
-                  <svg
-                    className="pointer-events-none absolute inset-0 h-full w-full"
-                    viewBox="0 0 100 100"
-                    preserveAspectRatio="none"
-                  >
-                    <polyline
-                      points={`${displayedPerspective.tl.x},${displayedPerspective.tl.y} ${displayedPerspective.tr.x},${displayedPerspective.tr.y} ${displayedPerspective.br.x},${displayedPerspective.br.y} ${displayedPerspective.bl.x},${displayedPerspective.bl.y} ${displayedPerspective.tl.x},${displayedPerspective.tl.y}`}
-                      fill="none"
-                      stroke="#f59e0b"
-                      strokeWidth="0.4"
-                      strokeDasharray="1 1.2"
-                    />
-                  </svg>
-                  {(
-                    Object.entries(displayedPerspective) as [
-                      keyof typeof displayedPerspective,
-                      { x: number; y: number },
-                    ][]
-                  ).map(([corner, point]) => (
-                    <button
-                      key={corner}
-                      type="button"
+                      {/* Rule of Thirds Grid Lines (fades in on drag/move) */}
+                      <g
+                        className="transition-opacity duration-200"
+                        style={{
+                          opacity: dragCorner !== null || dragEdge !== null || isMovingCropBox ? 0.45 : 0.1,
+                        }}
+                      >
+                        {/* Vertical 1/3 */}
+                        <line
+                          x1={displayedPerspective.tl.x + (displayedPerspective.tr.x - displayedPerspective.tl.x) / 3}
+                          y1={displayedPerspective.tl.y}
+                          x2={displayedPerspective.bl.x + (displayedPerspective.br.x - displayedPerspective.bl.x) / 3}
+                          y2={displayedPerspective.bl.y}
+                          stroke="#f59e0b"
+                          strokeWidth="0.25"
+                          className="pointer-events-none"
+                        />
+                        {/* Vertical 2/3 */}
+                        <line
+                          x1={displayedPerspective.tl.x + 2 * (displayedPerspective.tr.x - displayedPerspective.tl.x) / 3}
+                          y1={displayedPerspective.tl.y}
+                          x2={displayedPerspective.bl.x + 2 * (displayedPerspective.br.x - displayedPerspective.bl.x) / 3}
+                          y2={displayedPerspective.bl.y}
+                          stroke="#f59e0b"
+                          strokeWidth="0.25"
+                          className="pointer-events-none"
+                        />
+                        {/* Horizontal 1/3 */}
+                        <line
+                          x1={displayedPerspective.tl.x}
+                          y1={displayedPerspective.tl.y + (displayedPerspective.bl.y - displayedPerspective.tl.y) / 3}
+                          x2={displayedPerspective.tr.x}
+                          y2={displayedPerspective.tr.y + (displayedPerspective.br.y - displayedPerspective.tr.y) / 3}
+                          stroke="#f59e0b"
+                          strokeWidth="0.25"
+                          className="pointer-events-none"
+                        />
+                        {/* Horizontal 2/3 */}
+                        <line
+                          x1={displayedPerspective.tl.x}
+                          y1={displayedPerspective.tl.y + 2 * (displayedPerspective.bl.y - displayedPerspective.tl.y) / 3}
+                          x2={displayedPerspective.tr.x}
+                          y2={displayedPerspective.tr.y + 2 * (displayedPerspective.br.y - displayedPerspective.tr.y) / 3}
+                          stroke="#f59e0b"
+                          strokeWidth="0.25"
+                          className="pointer-events-none"
+                        />
+                      </g>
+
+                      {/* Main crop box border */}
+                      <polyline
+                        points={`${displayedPerspective.tl.x},${displayedPerspective.tl.y} ${displayedPerspective.tr.x},${displayedPerspective.tr.y} ${displayedPerspective.br.x},${displayedPerspective.br.y} ${displayedPerspective.bl.x},${displayedPerspective.bl.y} ${displayedPerspective.tl.x},${displayedPerspective.tl.y}`}
+                        fill="none"
+                        stroke="#f59e0b"
+                        strokeWidth="0.4"
+                        strokeDasharray="1 1.2"
+                        className="pointer-events-none"
+                      />
+                    </svg>
+
+                    {/* Edge Handle Overlays */}
+                    {/* Top edge */}
+                    <div
+                      className="absolute z-30 cursor-ns-resize"
+                      style={{
+                        left: `${displayedPerspective.tl.x}%`,
+                        top: `${displayedPerspective.tl.y - 1}%`,
+                        width: `${displayedPerspective.tr.x - displayedPerspective.tl.x}%`,
+                        height: "2%",
+                      }}
                       onPointerDown={(event) => {
                         event.preventDefault();
-                        setDraftPerspective(
-                          structuredClone(project.crop.perspective),
-                        );
-                        setDragCorner(corner);
+                        startCropDrag();
+                        setDragEdge("top");
                       }}
-                      className="absolute z-30 size-4 -translate-x-1/2 -translate-y-1/2 border border-black bg-[var(--accent)] shadow-[0_0_0_1px_rgba(245,158,11,0.35)]"
-                      style={{ left: `${point.x}%`, top: `${point.y}%` }}
                     />
-                  ))}
+                    {/* Bottom edge */}
+                    <div
+                      className="absolute z-30 cursor-ns-resize"
+                      style={{
+                        left: `${displayedPerspective.bl.x}%`,
+                        top: `${displayedPerspective.bl.y - 1}%`,
+                        width: `${displayedPerspective.br.x - displayedPerspective.bl.x}%`,
+                        height: "2%",
+                      }}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        startCropDrag();
+                        setDragEdge("bottom");
+                      }}
+                    />
+                    {/* Left edge */}
+                    <div
+                      className="absolute z-30 cursor-ew-resize"
+                      style={{
+                        left: `${displayedPerspective.tl.x - 1}%`,
+                        top: `${displayedPerspective.tl.y}%`,
+                        width: "2%",
+                        height: `${displayedPerspective.bl.y - displayedPerspective.tl.y}%`,
+                      }}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        startCropDrag();
+                        setDragEdge("left");
+                      }}
+                    />
+                    {/* Right edge */}
+                    <div
+                      className="absolute z-30 cursor-ew-resize"
+                      style={{
+                        left: `${displayedPerspective.tr.x - 1}%`,
+                        top: `${displayedPerspective.tr.y}%`,
+                        width: "2%",
+                        height: `${displayedPerspective.br.y - displayedPerspective.tr.y}%`,
+                      }}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        startCropDrag();
+                        setDragEdge("right");
+                      }}
+                    />
+
+                    {/* Corner handles */}
+                    {(
+                      Object.entries(displayedPerspective) as [
+                        keyof typeof displayedPerspective,
+                        { x: number; y: number },
+                      ][]
+                    ).map(([corner, point]) => (
+                      <button
+                        key={corner}
+                        type="button"
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          startCropDrag();
+                          setDragCorner(corner);
+                        }}
+                        className="absolute z-40 size-4 -translate-x-1/2 -translate-y-1/2 border border-black bg-[var(--accent)] shadow-[0_0_0_1px_rgba(245,158,11,0.35)]"
+                        style={{ left: `${point.x}%`, top: `${point.y}%` }}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
+              {project.imageSrc && (
+                <div className="pointer-events-none absolute inset-0 z-20 flex flex-col justify-between p-2 font-mono text-[9px] uppercase tracking-wider text-[var(--accent)] opacity-60">
+                  {/* Viewfinder corner brackets */}
+                  <div className="absolute left-2 top-2 h-3.5 w-3.5 border-l border-t border-[var(--accent)]" />
+                  <div className="absolute right-2 top-2 h-3.5 w-3.5 border-r border-t border-[var(--accent)]" />
+                  <div className="absolute left-2 bottom-2 h-3.5 w-3.5 border-l border-b border-[var(--accent)]" />
+                  <div className="absolute right-2 bottom-2 h-3.5 w-3.5 border-r border-b border-[var(--accent)]" />
+
+                  {/* Subtle center crosshair */}
+                  <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center">
+                    <div className="h-px w-3 bg-[var(--accent)] opacity-50" />
+                    <div className="absolute h-3 w-px bg-[var(--accent)] opacity-50" />
+                  </div>
+
+                  {/* Top telemetry */}
+                  <div className="flex justify-between px-3 pt-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--crimson)] animate-pulse" />
+                      <span>REC</span>
+                    </div>
+                    <div>
+                      <span>LOOK: {project.activeLookId ? project.activeLookId.toUpperCase() : "RAW BYPASS"}</span>
+                    </div>
+                  </div>
+
+                  {/* Bottom telemetry */}
+                  <div className="flex justify-between px-3 pb-1">
+                    <div>
+                      <span>RES: {stageSize.width ? `${Math.round(stageSize.width)}X${Math.round(stageSize.height)}` : "---"}</span>
+                    </div>
+                    <div>
+                      <span>LAYERS: {project.textLayers.length}</span>
+                    </div>
+                  </div>
                 </div>
-              ) : null}
+              )}
             </div>
           </div>
 

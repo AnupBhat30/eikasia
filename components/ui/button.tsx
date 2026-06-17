@@ -17,7 +17,7 @@ const buttonVariants = cva(
         ghost:
           "border-transparent bg-transparent text-[var(--text-muted)] hover:border-[var(--border)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)]",
         amber:
-          "border-[var(--accent)] bg-[var(--accent)] text-black hover:bg-[#ffb423]",
+          "border-[var(--accent)] bg-[var(--accent)] text-black hover:bg-[rgba(197,160,89,0.88)]",
       },
       size: {
         default: "h-11 px-4",

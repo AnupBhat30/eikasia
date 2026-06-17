@@ -12,7 +12,6 @@ import {
   Type,
   Undo2,
   Upload,
-  X,
 } from "lucide-react";
 
 import { exportProjectImage } from "@/lib/exportImage";
@@ -74,7 +73,7 @@ function EikasiaEditorShell() {
   const stageRef = React.useRef<CanvasStageHandle>(null);
   const objectUrlsRef = React.useRef<string[]>([]);
   const [exporting, setExporting] = React.useState(false);
-  const [inspectorOpen, setInspectorOpen] = React.useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = React.useState(true);
   const [notice, setNotice] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -117,7 +116,7 @@ function EikasiaEditorShell() {
       setImage(objectUrl, file.name);
       setNotice(null);
       setSelectedTextId(null);
-      setInspectorOpen(false);
+      setInspectorCollapsed(false);
       setExportFormat("jpeg");
     },
     [setExportFormat, setImage, setSelectedTextId],
@@ -138,8 +137,9 @@ function EikasiaEditorShell() {
         window.requestAnimationFrame(() => resolve());
       });
 
+      const stageSize = stageRef.current?.getStageSize();
       // Canvas-first export from state (not DOM screenshot)
-      await exportProjectImage(project, exportFormat, exportQuality);
+      await exportProjectImage(project, exportFormat, exportQuality, stageSize);
 
       setNotice("Export complete — rendering from state, not screenshot.");
       window.setTimeout(() => setNotice(null), 3000);
@@ -205,8 +205,9 @@ function EikasiaEditorShell() {
                 <span className="hidden min-[390px]:inline">Upload</span>
               </Button>
               <Button
-                className="hidden sm:inline-flex"
+                className="hidden sm:inline-flex h-10 px-3 sm:h-11 sm:px-4"
                 variant="outline"
+                size="sm"
                 onClick={() => {
                   resetProject();
                   setSelectedTextId(null);
@@ -281,15 +282,6 @@ function EikasiaEditorShell() {
               >
                 <Redo2 className="size-4" />
               </Button>
-
-              <Button
-                className="lg:hidden"
-                size="sm"
-                variant="outline"
-                onClick={() => setInspectorOpen(true)}
-              >
-                Controls
-              </Button>
             </div>
           </div>
 
@@ -302,8 +294,11 @@ function EikasiaEditorShell() {
           ) : null}
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[84px_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)_320px] xl:grid-cols-[260px_minmax(0,1fr)_320px]">
-          <aside className="hidden min-h-0 overflow-hidden border-r border-[var(--border)] bg-[rgba(20,20,20,0.96)] md:block">
+        <div 
+          className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[84px_minmax(0,1fr)_300px] lg:grid-cols-[220px_minmax(0,1fr)_320px] xl:grid-cols-[260px_minmax(0,1fr)_320px] grid-rows-[minmax(0,1fr)_var(--mobile-inspector-height,280px)] md:grid-rows-none"
+          style={{ "--mobile-inspector-height": inspectorCollapsed ? "0px" : "280px" } as React.CSSProperties}
+        >
+          <aside className="hidden min-h-0 overflow-hidden border-r border-[var(--border)] bg-[rgba(20,20,20,0.96)] md:block md:col-start-1 md:row-start-1">
             <div className="flex h-full min-h-0 flex-col">
               <div className="hidden px-5 pb-3 pt-5 lg:block">
                 <p className="text-[11px] uppercase tracking-[0.32em] text-[var(--text-muted)]">
@@ -322,12 +317,11 @@ function EikasiaEditorShell() {
                       type="button"
                       onClick={() => {
                         setActiveTab(tab.id);
-                        setInspectorOpen(true);
                       }}
                       className={cn(
                         "relative flex items-center gap-3 border-b border-[var(--border)] px-3 py-3 text-left transition-colors sm:px-4 sm:py-4",
                         active
-                          ? "bg-[rgba(245,158,11,0.08)] text-[var(--accent)]"
+                          ? "bg-[rgba(197,160,89,0.08)] text-[var(--accent)]"
                           : "text-[var(--text-muted)] hover:bg-[rgba(255,255,255,0.03)] hover:text-[var(--text-primary)]",
                       )}
                     >
@@ -362,7 +356,7 @@ function EikasiaEditorShell() {
             </div>
           </aside>
 
-          <main className="relative min-h-0 min-w-0 bg-[radial-gradient(circle_at_top,rgba(245,158,11,0.06),transparent_22%),radial-gradient(circle_at_bottom,rgba(255,255,255,0.03),transparent_18%),#0f0f0f]">
+          <main className="relative min-h-0 min-w-0 bg-[radial-gradient(circle_at_top,rgba(197,160,89,0.04),transparent_22%),#0f0f0f] row-start-1 md:col-start-2">
             <CanvasStage
               ref={stageRef}
               onRequestUpload={requestUpload}
@@ -370,8 +364,27 @@ function EikasiaEditorShell() {
             />
           </main>
 
-          <aside className="hidden min-h-0 overflow-hidden border-l border-[var(--border)] bg-[rgba(17,17,17,0.96)] lg:block">
-            <InspectorPanel />
+          <aside className={cn(
+            "min-h-0 overflow-hidden border-t md:border-t-0 md:border-l border-[var(--border)] bg-[rgba(17,17,17,0.96)] transition-[height] duration-200 ease-in-out md:h-full row-start-2 md:row-start-1 md:col-start-3",
+            inspectorCollapsed ? "h-0 border-t-transparent" : "h-[280px]"
+          )}>
+            <div className="flex h-full flex-col">
+              <div className="flex h-9 shrink-0 items-center justify-between border-b border-[var(--border)] px-4 bg-[rgba(15,15,18,0.5)] md:hidden">
+                <span className="font-mono text-[9px] uppercase tracking-wider text-[var(--text-muted)]">
+                  Controls: {SIDEBAR_TABS.find((tab) => tab.id === activeTab)?.label}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setInspectorCollapsed(true)}
+                  className="text-[9px] font-mono uppercase tracking-widest text-[var(--accent)] hover:text-white"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="min-h-0 flex-1">
+                <InspectorPanel />
+              </div>
+            </div>
           </aside>
         </div>
 
@@ -386,13 +399,17 @@ function EikasiaEditorShell() {
                   key={tab.id}
                   type="button"
                   onClick={() => {
-                    setActiveTab(tab.id);
-                    setInspectorOpen(true);
+                    if (activeTab === tab.id) {
+                      setInspectorCollapsed(!inspectorCollapsed);
+                    } else {
+                      setActiveTab(tab.id);
+                      setInspectorCollapsed(false);
+                    }
                   }}
                   className={cn(
                     "flex min-w-0 flex-1 items-center justify-center gap-1 border px-2 py-2 text-[9px] uppercase tracking-[0.12em] transition-colors",
-                    active
-                      ? "border-[var(--accent)] bg-[rgba(245,158,11,0.08)] text-[var(--accent)]"
+                    active && !inspectorCollapsed
+                      ? "border-[var(--accent)] bg-[rgba(197,160,89,0.08)] text-[var(--accent)]"
                       : "border-[var(--border)] bg-[rgba(255,255,255,0.02)] text-[var(--text-muted)]",
                   )}
                 >
@@ -404,33 +421,6 @@ function EikasiaEditorShell() {
           </div>
         </nav>
       </div>
-
-      {inspectorOpen ? (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <button
-            type="button"
-            className="absolute inset-0 bg-[rgba(0,0,0,0.56)]"
-            onClick={() => setInspectorOpen(false)}
-          />
-          <aside className="absolute right-0 top-0 flex h-full w-full max-w-full flex-col overflow-hidden border-l border-[var(--border)] bg-[rgba(17,17,17,0.98)] shadow-[0_20px_60px_rgba(0,0,0,0.55)] sm:w-[min(92vw,360px)]">
-            <div className="flex h-14 items-center justify-between border-b border-[var(--border)] px-4 sm:h-16 sm:px-5">
-              <p className="text-[11px] uppercase tracking-[0.32em] text-[var(--text-primary)]">
-                Inspector
-              </p>
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => setInspectorOpen(false)}
-              >
-                <X className="size-4" />
-              </Button>
-            </div>
-            <div className="min-h-0 flex-1 pb-[env(safe-area-inset-bottom)]">
-              <InspectorPanel />
-            </div>
-          </aside>
-        </div>
-      ) : null}
     </div>
   );
 }

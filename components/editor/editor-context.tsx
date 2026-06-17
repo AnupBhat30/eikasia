@@ -32,6 +32,7 @@ interface HistoryState {
 type ProjectAction =
   | { type: "reset-project" }
   | { type: "set-image"; imageSrc: string | null; imageName: string | null }
+  | { type: "set-image-dimensions"; width: number; height: number }
   | { type: "set-look"; lookId: string | null }
   | { type: "set-filter-intensity"; value: number }
   | { type: "set-acros-channel"; value: AcrosChannel }
@@ -65,6 +66,7 @@ interface EditorContextValue {
   setExportFormat: (format: "png" | "jpeg") => void;
   setExportQuality: (quality: number) => void;
   setImage: (imageSrc: string | null, imageName: string | null) => void;
+  setImageDimensions: (width: number, height: number) => void;
   resetProject: () => void;
   setLook: (lookId: string | null) => void;
   setFilterIntensity: (value: number) => void;
@@ -100,6 +102,22 @@ function pushHistory(history: HistoryState, nextPresent: ProjectState): HistoryS
   };
 }
 
+function areCropPointsEqual(first: CropPoint, second: CropPoint) {
+  return first.x === second.x && first.y === second.y;
+}
+
+function areCropPerspectivesEqual(
+  first: ProjectState["crop"]["perspective"],
+  second: ProjectState["crop"]["perspective"],
+) {
+  return (
+    areCropPointsEqual(first.tl, second.tl) &&
+    areCropPointsEqual(first.tr, second.tr) &&
+    areCropPointsEqual(first.br, second.br) &&
+    areCropPointsEqual(first.bl, second.bl)
+  );
+}
+
 function projectReducer(history: HistoryState, action: ProjectAction): HistoryState {
   const applyChange = (recipe: (project: ProjectState) => ProjectState) =>
     pushHistory(history, recipe(history.present));
@@ -113,6 +131,12 @@ function projectReducer(history: HistoryState, action: ProjectAction): HistorySt
         imageSrc: action.imageSrc,
         imageName: action.imageName,
       });
+    case "set-image-dimensions":
+      return applyChange((project) => ({
+        ...project,
+        imageWidth: action.width,
+        imageHeight: action.height,
+      }));
     case "set-look":
       if (history.present.activeLookId === action.lookId) {
         return history;
@@ -262,15 +286,37 @@ function projectReducer(history: HistoryState, action: ProjectAction): HistorySt
         },
       }));
     case "set-crop-preset":
+      if (
+        history.present.crop.presetId === action.presetId &&
+        areCropPerspectivesEqual(
+          history.present.crop.perspective,
+          getPerspectiveForPreset(
+            action.presetId,
+            history.present.imageWidth,
+            history.present.imageHeight,
+          ),
+        )
+      ) {
+        return history;
+      }
+
       return applyChange((project) => ({
         ...project,
         crop: {
           ...project.crop,
           presetId: action.presetId,
-          perspective: getPerspectiveForPreset(action.presetId),
+          perspective: getPerspectiveForPreset(
+            action.presetId,
+            project.imageWidth,
+            project.imageHeight,
+          ),
         },
       }));
     case "set-crop-perspective":
+      if (areCropPerspectivesEqual(history.present.crop.perspective, action.value)) {
+        return history;
+      }
+
       return applyChange((project) => ({
         ...project,
         crop: {
@@ -290,6 +336,19 @@ function projectReducer(history: HistoryState, action: ProjectAction): HistorySt
         },
       }));
     case "reset-crop":
+      if (
+        history.present.crop.presetId === DEFAULT_CROP.presetId &&
+        history.present.crop.rotation === DEFAULT_CROP.rotation &&
+        history.present.crop.flipX === DEFAULT_CROP.flipX &&
+        history.present.crop.flipY === DEFAULT_CROP.flipY &&
+        areCropPerspectivesEqual(
+          history.present.crop.perspective,
+          DEFAULT_CROP.perspective,
+        )
+      ) {
+        return history;
+      }
+
       return applyChange((project) => ({
         ...project,
         crop: structuredClone(DEFAULT_CROP),
@@ -339,12 +398,6 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
     }
   }, [history.present.textLayers, selectedTextId]);
 
-  const dispatchTransition = React.useCallback((action: ProjectAction) => {
-    React.startTransition(() => {
-      dispatch(action);
-    });
-  }, []);
-
   const value = React.useMemo<EditorContextValue>(
     () => ({
       project: history.present,
@@ -360,44 +413,42 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       setExportQuality,
       setImage: (imageSrc, imageName) =>
         dispatch({ type: "set-image", imageSrc, imageName }),
+      setImageDimensions: (width, height) =>
+        dispatch({ type: "set-image-dimensions", width, height }),
       resetProject: () => dispatch({ type: "reset-project" }),
-      setLook: (lookId) => dispatchTransition({ type: "set-look", lookId }),
+      setLook: (lookId) => dispatch({ type: "set-look", lookId }),
       setFilterIntensity: (value) =>
-        dispatchTransition({ type: "set-filter-intensity", value }),
+        dispatch({ type: "set-filter-intensity", value }),
       setAcrosChannel: (value) =>
-        dispatchTransition({ type: "set-acros-channel", value }),
+        dispatch({ type: "set-acros-channel", value }),
       setAdjustment: (key, value) =>
-        dispatchTransition({ type: "set-adjustment", key, value }),
+        dispatch({ type: "set-adjustment", key, value }),
       resetAdjustment: (key) =>
-        dispatchTransition({ type: "reset-adjustment", key }),
-      addTextLayer: (layer) =>
-        dispatchTransition({ type: "add-text-layer", layer }),
+        dispatch({ type: "reset-adjustment", key }),
+      addTextLayer: (layer) => dispatch({ type: "add-text-layer", layer }),
       updateTextLayer: (id, updates) =>
-        dispatchTransition({ type: "update-text-layer", id, updates }),
-      removeTextLayer: (id) =>
-        dispatchTransition({ type: "remove-text-layer", id }),
-      setTextLayers: (layers) =>
-        dispatchTransition({ type: "set-text-layers", layers }),
+        dispatch({ type: "update-text-layer", id, updates }),
+      removeTextLayer: (id) => dispatch({ type: "remove-text-layer", id }),
+      setTextLayers: (layers) => dispatch({ type: "set-text-layers", layers }),
       upsertOverlay: (layer, replaceByType = true) =>
-        dispatchTransition({ type: "upsert-overlay", layer, replaceByType }),
+        dispatch({ type: "upsert-overlay", layer, replaceByType }),
       removeOverlay: (id, overlayType) =>
-        dispatchTransition({ type: "remove-overlay", id, overlayType }),
+        dispatch({ type: "remove-overlay", id, overlayType }),
       setCropRotation: (value) =>
-        dispatchTransition({ type: "set-crop-rotation", value }),
-      toggleFlip: (axis) => dispatchTransition({ type: "toggle-flip", axis }),
+        dispatch({ type: "set-crop-rotation", value }),
+      toggleFlip: (axis) => dispatch({ type: "toggle-flip", axis }),
       setCropPreset: (presetId) =>
-        dispatchTransition({ type: "set-crop-preset", presetId }),
+        dispatch({ type: "set-crop-preset", presetId }),
       setCropPerspective: (value) =>
-        dispatchTransition({ type: "set-crop-perspective", value }),
+        dispatch({ type: "set-crop-perspective", value }),
       setCropPoint: (point, value) =>
-        dispatchTransition({ type: "set-crop-point", point, value }),
-      resetCrop: () => dispatchTransition({ type: "reset-crop" }),
+        dispatch({ type: "set-crop-point", point, value }),
+      resetCrop: () => dispatch({ type: "reset-crop" }),
       undo: () => dispatch({ type: "undo" }),
       redo: () => dispatch({ type: "redo" }),
     }),
     [
       activeTab,
-      dispatchTransition,
       exportFormat,
       exportQuality,
       history,

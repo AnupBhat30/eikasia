@@ -2,9 +2,10 @@ import type { ProjectState, TextLayer } from "@/components/editor/types";
 import type { LookDefinition } from "@/components/editor/types";
 import { getLookDefinition } from "@/components/editor/constants";
 import {
-  getTextShadowStyle,
-  resolveTextFontFamily,
+  getFabricTextboxOptions,
+  createScaledTextShadow,
 } from "@/lib/text-style";
+import { StaticCanvas, Textbox } from "fabric";
 
 const EXPORT_SCALE = 1;
 type RasterContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -57,7 +58,7 @@ function createWorkingCanvas(width: number, height: number) {
 function getWorkingContext(
   canvas: OffscreenCanvas | HTMLCanvasElement,
 ): RasterContext {
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
   if (!ctx) {
     throw new Error("Failed to get canvas context");
@@ -201,6 +202,7 @@ export async function exportProjectImage(
   state: ProjectState,
   format: "png" | "jpeg" = "jpeg",
   quality: number = 92,
+  stageSize?: { width: number; height: number },
 ): Promise<void> {
   const { imageSrc } = state;
 
@@ -218,11 +220,14 @@ export async function exportProjectImage(
 
     // Create offscreen canvas for export
     const canvas = new OffscreenCanvas(width, height);
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
     if (!ctx) {
       throw new Error("Failed to get canvas context");
     }
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
 
     renderProjectRaster({
       ctx,
@@ -240,10 +245,44 @@ export async function exportProjectImage(
         ),
     });
 
-    // Composite text layers with proper blend modes
+    // Composite text layers with proper blend modes and crop transform (rotation/flip)
+    ctx.save();
+    const centerX = width / 2;
+    const centerY = height / 2;
+    ctx.translate(centerX, centerY);
+    ctx.rotate((state.crop.rotation * Math.PI) / 180);
+    ctx.scale(state.crop.flipX ? -1 : 1, state.crop.flipY ? -1 : 1);
+    ctx.translate(-centerX, -centerY);
+
+    const cropPoints = [
+      state.crop.perspective.tl,
+      state.crop.perspective.tr,
+      state.crop.perspective.br,
+      state.crop.perspective.bl,
+    ];
+    const xs = cropPoints.map((p) => p.x);
+    const ys = cropPoints.map((p) => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    const cropW = maxX - minX;
+    const cropH = maxY - minY;
+    const cropWidthPct = cropW > 0 ? cropW : 100;
+    const cropHeightPct = cropH > 0 ? cropH : 100;
+
     for (const layer of state.textLayers) {
-      compositeTextLayer(ctx, layer, width, height);
+      const mappedLayer = {
+        ...layer,
+        xPct: ((layer.xPct - minX) / cropWidthPct) * 100,
+        yPct: ((layer.yPct - minY) / cropHeightPct) * 100,
+        widthPct: (layer.widthPct / cropWidthPct) * 100,
+        fontSizePct: (layer.fontSizePct / cropHeightPct) * 100,
+      };
+      compositeTextLayer(ctx, mappedLayer, width, height, stageSize);
     }
+    ctx.restore();
 
     // ── Export to blob and trigger download ─────────────────────────────────
     const mimeType = format === "png" ? "image/png" : "image/jpeg";
@@ -259,6 +298,8 @@ export async function exportProjectImage(
     }
 
     triggerDownload(blob, `eikasia-export-${Date.now()}.${format === "png" ? "png" : "jpg"}`);
+
+    sourceImg.close();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     throw new Error(`Export failed: ${message}`);
@@ -1132,223 +1173,47 @@ function compositeTextLayer(
   layer: TextLayer,
   w: number,
   h: number,
+  stageSize?: { width: number; height: number },
 ): void {
-  const x = (w * layer.xPct) / 100;
-  const y = (h * layer.yPct) / 100;
-  const maxWidth = Math.max(24, (w * layer.widthPct) / 100);
-  const fontSize = (h * layer.fontSizePct) / 100;
-  const tracking = charSpacingToPixels(layer.letterSpacing, fontSize);
-  const shadow = getTextShadowStyle(layer.shadowPreset, layer.color);
+  // Create a temporary HTML canvas in the browser document
+  const tempCanvasEl = document.createElement("canvas");
+  tempCanvasEl.width = w;
+  tempCanvasEl.height = h;
 
+  // Initialize a Fabric StaticCanvas on it
+  const staticCanvas = new StaticCanvas(tempCanvasEl, {
+    enableRetinaScaling: false,
+    renderOnAddRemove: false,
+  });
+
+  // Calculate the options for the Fabric Textbox using the shared builder
+  const options = getFabricTextboxOptions(layer, w, h);
+
+  // Create the Textbox object
+  const textbox = new Textbox(layer.text, {
+    ...options,
+    editable: false,
+  } as ConstructorParameters<typeof Textbox>[1]);
+
+  // Calculate shadow scaling factor:
+  // Ratio of export canvas height to the preview stage height.
+  // Default to 1 if stageSize is not available.
+  const scaleFactor = stageSize?.height ? h / stageSize.height : 1;
+  textbox.shadow = createScaledTextShadow(layer.shadowPreset, layer.color, scaleFactor);
+
+  // Add the textbox to the canvas and render
+  staticCanvas.add(textbox);
+  staticCanvas.renderAll();
+
+  // Composite the rendered temporary canvas onto the export context
   ctx.save();
   ctx.globalAlpha = layer.opacity;
   ctx.globalCompositeOperation = blendModeToComposite(layer.blendMode);
-  ctx.fillStyle = layer.color;
-  ctx.font = `${layer.fontStyle === "italic" ? "italic " : ""}${layer.fontWeight} ${fontSize}px ${resolveTextFontFamily(layer.fontFamily)}`;
-  ctx.textBaseline = "top";
-
-  const lines = wrapTextToLines(ctx, layer.text, maxWidth, tracking);
-  const widestLine = Math.max(
-    ...lines.map((line) => measureTrackedTextWidth(ctx, line, tracking)),
-    0,
-  );
-  const lineAdvance = fontSize * layer.lineHeight;
-  const blockHeight =
-    fontSize + Math.max(0, lines.length - 1) * lineAdvance;
-  const blockWidth = layer.backgroundColor ? maxWidth : widestLine;
-  const blockTop = y - blockHeight / 2;
-  const blockLeft = getAlignedBlockLeft(x, blockWidth, layer.textAlign);
-
-  if (layer.backgroundColor) {
-    const bgPadX = fontSize * 0.28;
-    const bgPadY = fontSize * 0.22;
-
-    ctx.save();
-    ctx.shadowColor = "transparent";
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 0;
-    ctx.fillStyle = layer.backgroundColor;
-    ctx.fillRect(
-      blockLeft - bgPadX,
-      blockTop - bgPadY,
-      blockWidth + bgPadX * 2,
-      blockHeight + bgPadY * 2,
-    );
-    ctx.restore();
-    ctx.fillStyle = layer.color;
-  }
-
-  if (shadow) {
-    ctx.shadowColor = shadow.color;
-    ctx.shadowBlur = shadow.blur;
-    ctx.shadowOffsetX = shadow.offsetX;
-    ctx.shadowOffsetY = shadow.offsetY;
-  }
-
-  lines.forEach((line, index) => {
-    const lineY = blockTop + index * lineAdvance;
-    drawTrackedTextLine(ctx, line, x, lineY, layer.textAlign, tracking);
-  });
-
+  ctx.drawImage(tempCanvasEl, 0, 0);
   ctx.restore();
-}
 
-function charSpacingToPixels(charSpacing: number, fontSize: number): number {
-  if (!fontSize) {
-    return 0;
-  }
-
-  return (charSpacing / 1000) * fontSize;
-}
-
-function measureTrackedTextWidth(
-  ctx: OffscreenCanvasRenderingContext2D,
-  text: string,
-  tracking: number,
-): number {
-  if (!text) {
-    return 0;
-  }
-
-  const chars = Array.from(text);
-  const glyphWidth = chars.reduce(
-    (sum, char) => sum + ctx.measureText(char).width,
-    0,
-  );
-
-  return glyphWidth + Math.max(0, chars.length - 1) * tracking;
-}
-
-function wrapWordToLines(
-  ctx: OffscreenCanvasRenderingContext2D,
-  word: string,
-  maxWidth: number,
-  tracking: number,
-): string[] {
-  const segments: string[] = [];
-  let current = "";
-
-  for (const char of Array.from(word)) {
-    const next = `${current}${char}`;
-
-    if (!current || measureTrackedTextWidth(ctx, next, tracking) <= maxWidth) {
-      current = next;
-      continue;
-    }
-
-    segments.push(current);
-    current = char;
-  }
-
-  if (current) {
-    segments.push(current);
-  }
-
-  return segments;
-}
-
-function wrapTextToLines(
-  ctx: OffscreenCanvasRenderingContext2D,
-  text: string,
-  maxWidth: number,
-  tracking: number,
-): string[] {
-  const paragraphs = text.replace(/\r/g, "").split("\n");
-  const lines: string[] = [];
-
-  paragraphs.forEach((paragraph) => {
-    if (!paragraph) {
-      lines.push("");
-      return;
-    }
-
-    const words = paragraph.split(/\s+/);
-    let current = "";
-
-    words.forEach((word) => {
-      const candidate = current ? `${current} ${word}` : word;
-
-      if (
-        !current ||
-        measureTrackedTextWidth(ctx, candidate, tracking) <= maxWidth
-      ) {
-        current = candidate;
-        return;
-      }
-
-      lines.push(current);
-
-      if (measureTrackedTextWidth(ctx, word, tracking) <= maxWidth) {
-        current = word;
-        return;
-      }
-
-      const wrappedWord = wrapWordToLines(ctx, word, maxWidth, tracking);
-      const tail = wrappedWord.pop();
-
-      lines.push(...wrappedWord);
-      current = tail ?? "";
-    });
-
-    if (current) {
-      lines.push(current);
-    }
-  });
-
-  return lines.length ? lines : [""];
-}
-
-function getAlignedBlockLeft(
-  x: number,
-  blockWidth: number,
-  textAlign: TextLayer["textAlign"],
-) {
-  switch (textAlign) {
-    case "right":
-      return x - blockWidth;
-    case "center":
-      return x - blockWidth / 2;
-    case "left":
-    default:
-      return x;
-  }
-}
-
-function drawTrackedTextLine(
-  ctx: OffscreenCanvasRenderingContext2D,
-  text: string,
-  x: number,
-  y: number,
-  textAlign: TextLayer["textAlign"],
-  tracking: number,
-) {
-  if (!text) {
-    return;
-  }
-
-  if (tracking <= 0) {
-    ctx.textAlign = textAlign as CanvasTextAlign;
-    ctx.fillText(text, x, y);
-    return;
-  }
-
-  const chars = Array.from(text);
-  const totalWidth = measureTrackedTextWidth(ctx, text, tracking);
-  let cursorX = x;
-
-  if (textAlign === "center") {
-    cursorX -= totalWidth / 2;
-  } else if (textAlign === "right") {
-    cursorX -= totalWidth;
-  }
-
-  ctx.textAlign = "left";
-
-  chars.forEach((char) => {
-    ctx.fillText(char, cursorX, y);
-    cursorX += ctx.measureText(char).width + tracking;
-  });
+  // Dispose of the static canvas to free resources
+  staticCanvas.dispose();
 }
 
 function blendModeToComposite(mode: string): GlobalCompositeOperation {
@@ -1383,5 +1248,5 @@ function triggerDownload(blob: Blob, filename: string): void {
   document.body.removeChild(link);
 
   // Revoke after delay to ensure download starts
-  setTimeout(() => URL.revokeObjectURL(url), 1200);
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }

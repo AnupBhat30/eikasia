@@ -43,6 +43,22 @@ const CATEGORY_RENDER_RECIPES: Record<LookCategory, LookRenderRecipe> = {
     layerOpacity: 0.86,
     washes: [wash("#ece5db", 0.03, "screen")],
   },
+  colorful: {
+    layerBlendMode: "normal",
+    layerOpacity: 0.8,
+    washes: [
+      wash("#ff9cb0", 0.04, "screen"),
+      wash("#79bee2", 0.035, "soft-light"),
+    ],
+  },
+  chroma: {
+    layerBlendMode: "normal",
+    layerOpacity: 0.85,
+    washes: [
+      wash("#ffd296", 0.035, "soft-light"),
+      wash("#82b2d2", 0.02, "soft-light"),
+    ],
+  },
 };
 
 const LOOK_RENDER_RECIPE_OVERRIDES: Record<string, Partial<LookRenderRecipe>> = {
@@ -268,6 +284,14 @@ const LOOK_RENDER_RECIPE_OVERRIDES: Record<string, Partial<LookRenderRecipe>> = 
       wash("#d98c6a", 0.05, "soft-light"),
     ],
   },
+  "chroma-golden-hour": {
+    layerBlendMode: "soft-light",
+    layerOpacity: 0.82,
+    washes: [
+      wash("#ffbd68", 0.1, "screen"),
+      wash("#d98c6a", 0.05, "soft-light"),
+    ],
+  },
   moonlight: {
     layerBlendMode: "multiply",
     layerOpacity: 0.86,
@@ -341,6 +365,38 @@ const LOOK_RENDER_RECIPE_OVERRIDES: Record<string, Partial<LookRenderRecipe>> = 
       wash("#105b4d", 0.1, "multiply"),
       wash("#ff8d4d", 0.08, "screen"),
       wash("#9a3f4f", 0.055, "soft-light"),
+    ],
+  },
+  "barbie-core": {
+    layerBlendMode: "normal",
+    layerOpacity: 0.82,
+    washes: [
+      wash("#ff6bb5", 0.055, "screen"),
+      wash("#ffd579", 0.03, "screen"),
+    ],
+  },
+  "la-la-land": {
+    layerBlendMode: "overlay",
+    layerOpacity: 0.84,
+    washes: [
+      wash("#ffc366", 0.07, "screen"),
+      wash("#316ba8", 0.04, "multiply"),
+    ],
+  },
+  "grand-budapest": {
+    layerBlendMode: "soft-light",
+    layerOpacity: 0.76,
+    washes: [
+      wash("#fcc2d7", 0.065, "screen"),
+      wash("#fff3bf", 0.05, "screen"),
+    ],
+  },
+  "miami-vice": {
+    layerBlendMode: "overlay",
+    layerOpacity: 0.88,
+    washes: [
+      wash("#ff3d8e", 0.075, "screen"),
+      wash("#1bc2a5", 0.06, "multiply"),
     ],
   },
 };

@@ -18,6 +18,8 @@ import {
   ASPECT_RATIO_PRESETS,
   BORDER_PRESETS,
   CINEMA_LOOKS,
+  COLORFUL_LOOKS,
+  CHROMA_LOOKS,
   DEFAULT_FLARE_PRESET,
   DUST_PRESET,
   FUJIFILM_LOOKS,
@@ -32,6 +34,7 @@ import type {
   AdjustmentControlDefinition,
   LookDefinition,
   OverlayPresetDefinition,
+  ProjectState,
   TextLayer,
 } from "@/components/editor/types";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -45,6 +48,8 @@ const LOOK_CATEGORY_LABELS: Record<LookDefinition["category"], string> = {
   analog: "Analog Film",
   cinema: "Cinema Preset",
   bw: "Black & White",
+  colorful: "Movie Pop & Pastels",
+  chroma: "Chroma Pop & Golden Glow",
 };
 
 function PanelSection({
@@ -284,6 +289,48 @@ function FiltersInspector() {
       </PanelSection>
 
       <PanelSection
+        icon={Sparkles}
+        title="Movie Pop & Pastels"
+        detail="Colorful, subtle pastel movie grades—featuring Barbie-core, La La Land warm sunsets, and Miami Vice neon pops."
+      >
+        <div className="overflow-x-auto pb-3">
+          <div className="flex w-max gap-3 pr-4">
+            {COLORFUL_LOOKS.map((look) => (
+              <ToneCard
+                key={look.id}
+                look={look}
+                active={project.activeLookId === look.id}
+                acrosChannel={project.acrosChannel}
+                disabled={false}
+                onSelect={setLook}
+              />
+            ))}
+          </div>
+        </div>
+      </PanelSection>
+
+      <PanelSection
+        icon={Sparkles}
+        title="Chroma Pop & Golden Glow"
+        detail="Instagram-optimized, color-safe filters for high-impact sharing without color distortion."
+      >
+        <div className="overflow-x-auto pb-3">
+          <div className="flex w-max gap-3 pr-4">
+            {CHROMA_LOOKS.map((look) => (
+              <ToneCard
+                key={look.id}
+                look={look}
+                active={project.activeLookId === look.id}
+                acrosChannel={project.acrosChannel}
+                disabled={false}
+                onSelect={setLook}
+              />
+            ))}
+          </div>
+        </div>
+      </PanelSection>
+
+      <PanelSection
         icon={Aperture}
         title="Look Mix"
         detail="Blend the graded layer over the untouched base image for subtler or harder matches."
@@ -398,15 +445,22 @@ function AdjustmentsInspector() {
   );
 }
 
-function createLayerFromPreset(preset: (typeof TEXT_PRESETS)[number]): TextLayer {
+function createLayerFromPreset(
+  preset: (typeof TEXT_PRESETS)[number],
+  perspective: ProjectState["crop"]["perspective"],
+): TextLayer {
+  const cropW = perspective.tr.x - perspective.tl.x;
+  const cropH = perspective.bl.y - perspective.tl.y;
+  const fontScale = Math.min(cropW / 100, cropH / 100);
+
   return {
     id: uid("text"),
     presetId: preset.id,
     text: preset.text,
-    xPct: preset.xPct,
-    yPct: preset.yPct,
-    widthPct: preset.widthPct,
-    fontSizePct: preset.fontSizePct,
+    xPct: perspective.tl.x + (preset.xPct / 100) * cropW,
+    yPct: perspective.tl.y + (preset.yPct / 100) * cropH,
+    widthPct: (preset.widthPct / 100) * cropW,
+    fontSizePct: preset.fontSizePct * fontScale,
     fontFamily: preset.fontFamily,
     color: preset.color,
     opacity: preset.opacity,
@@ -421,15 +475,21 @@ function createLayerFromPreset(preset: (typeof TEXT_PRESETS)[number]): TextLayer
   };
 }
 
-function createCustomTextLayer(): TextLayer {
+function createCustomTextLayer(
+  perspective: ProjectState["crop"]["perspective"],
+): TextLayer {
+  const cropW = perspective.tr.x - perspective.tl.x;
+  const cropH = perspective.bl.y - perspective.tl.y;
+  const fontScale = Math.min(cropW / 100, cropH / 100);
+
   return {
     id: uid("text"),
     presetId: "custom",
     text: "Double-click to edit",
-    xPct: 50,
-    yPct: 50,
-    widthPct: 48,
-    fontSizePct: 12,
+    xPct: perspective.tl.x + 0.5 * cropW,
+    yPct: perspective.tl.y + 0.5 * cropH,
+    widthPct: 0.48 * cropW,
+    fontSizePct: 12 * fontScale,
     fontFamily: "sans",
     color: "#fafafa",
     opacity: 1,
@@ -465,7 +525,7 @@ function TextInspector() {
       return;
     }
 
-    const layer = createLayerFromPreset(preset);
+    const layer = createLayerFromPreset(preset, project.crop.perspective);
     addTextLayer(layer);
     setSelectedTextId(layer.id);
 
@@ -486,7 +546,7 @@ function TextInspector() {
   };
 
   const handleAddCustomText = () => {
-    const layer = createCustomTextLayer();
+    const layer = createCustomTextLayer(project.crop.perspective);
     addTextLayer(layer);
     setSelectedTextId(layer.id);
   };
@@ -877,14 +937,16 @@ function CropInspector() {
             <Button
               variant={project.crop.flipX ? "amber" : "outline"}
               onClick={() => toggleFlip("x")}
+              size="sm"
             >
-              Flip Horizontal
+              Flip H
             </Button>
             <Button
               variant={project.crop.flipY ? "amber" : "outline"}
               onClick={() => toggleFlip("y")}
+              size="sm"
             >
-              Flip Vertical
+              Flip V
             </Button>
           </div>
 
@@ -892,14 +954,16 @@ function CropInspector() {
             <Button
               variant="ghost"
               onClick={() => setCropRotation(0)}
+              size="sm"
             >
               Straighten
             </Button>
             <Button
               variant="ghost"
               onClick={resetCrop}
+              size="sm"
             >
-              Reset Transform
+              Reset
             </Button>
           </div>
 
