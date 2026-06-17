@@ -458,8 +458,8 @@ function compositeLookLayer(
   const lookCtx = getWorkingContext(lookCanvas);
 
   drawSource(lookCtx, img, w, h);
-  applyColorMatrixToCanvas(lookCtx, resolveMatrix(look, acrosChannel), 1, w, h);
   applyCssFilterToCanvas(lookCtx, look.cssFilter, w, h);
+  applyColorMatrixToCanvas(lookCtx, resolveMatrix(look, acrosChannel), 1, w, h);
 
   ctx.save();
   ctx.globalAlpha = clamp(intensity * look.renderRecipe.layerOpacity, 0, 1);
@@ -554,6 +554,12 @@ function applyCssFilterToCanvas(
           }
           break;
       }
+
+      // Clamp intermediate values to [0, 255] after each CSS filter operation
+      // to match browser rendering pipeline behavior.
+      r = Math.max(0, Math.min(255, r));
+      g = Math.max(0, Math.min(255, g));
+      b = Math.max(0, Math.min(255, b));
     });
 
     data[i] = clampByte(r);
