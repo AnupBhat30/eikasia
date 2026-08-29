@@ -278,7 +278,7 @@ function FiltersInspector({ compact = false }: { compact?: boolean }) {
           title="Film looks"
           detail="Choose a family, then swipe through its looks."
         >
-          <div className="scrollbar-none -mx-3 touch-pan-x overflow-x-auto px-3">
+          <div className="scrollbar-none -mx-3 touch-auto overflow-x-auto px-3">
             <div className="flex w-max gap-2 pr-3">
               {LOOK_GROUPS.map((group) => (
                 <button
@@ -299,7 +299,7 @@ function FiltersInspector({ compact = false }: { compact?: boolean }) {
             </div>
           </div>
 
-          <div className="scrollbar-none -mx-3 touch-pan-x snap-x snap-mandatory overflow-x-auto px-3 pb-1">
+          <div className="scrollbar-none -mx-3 touch-auto snap-x snap-proximity overflow-x-auto px-3 pb-1">
             <div className="flex w-max gap-3 pr-5">
               {activeGroup.looks.map((look) => (
                 <div key={look.id} className="snap-start">
@@ -1229,7 +1229,10 @@ export function InspectorPanel({
   return (
     <div
       data-compact={compact}
-      className={cn("scrollbar-gutter-stable min-h-0 h-full overflow-y-auto overscroll-contain", className)}
+      className={cn(
+        "scrollbar-gutter-stable min-h-0 h-full touch-pan-y overflow-y-auto overscroll-contain",
+        className,
+      )}
     >
       <div className={cn("space-y-6", compact ? "p-3 pb-10" : "p-4 pb-6 sm:p-5")}>
         {activeTab === "filters" ? <FiltersInspector compact={compact} /> : null}

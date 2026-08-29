@@ -138,12 +138,7 @@ canvas {
   }
 
   .mobile-tool-drawer [data-compact="true"] .editor-panel-section-header {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    margin-inline: -0.25rem;
-    padding: 0.25rem;
-    background: rgb(17, 17, 20);
+    position: static;
   }
 
   .mobile-tool-drawer [data-compact="true"] .editor-panel-section-detail {

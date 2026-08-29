@@ -113,7 +113,7 @@ const Slider = React.forwardRef<
       ref={ref}
       data-slot="slider"
       className={cn(
-        "relative flex w-full touch-none select-none items-center",
+        "relative flex w-full touch-pan-y select-none items-center",
         className,
       )}
       value={controlled ? liveValue : undefined}
