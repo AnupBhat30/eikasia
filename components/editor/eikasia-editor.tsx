@@ -10,6 +10,7 @@ import {
   Film,
   Layers3,
   LoaderCircle,
+  Pencil,
   Redo2,
   SlidersHorizontal,
   Type,
@@ -452,6 +453,7 @@ function EikasiaEditorShell() {
     redo,
     canUndo,
     canRedo,
+    selectedTextId,
     setSelectedTextId,
     setImage,
   } = useEditor();
@@ -465,6 +467,8 @@ function EikasiaEditorShell() {
   const [hasUnexportedChanges, setHasUnexportedChanges] = React.useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = React.useState(false);
   const [mobileToolsExpanded, setMobileToolsExpanded] = React.useState(false);
+  const mobileDrawerRef = React.useRef<HTMLElement>(null);
+  const [mobileDrawerHeight, setMobileDrawerHeight] = React.useState(0);
   const [notice, setNotice] = React.useState<string | null>(null);
   const exportPreview = React.useMemo(() => {
     if (!project.imageWidth || !project.imageHeight) {
@@ -572,6 +576,54 @@ function EikasiaEditorShell() {
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [mobileToolsOpen]);
+
+  React.useEffect(() => {
+    if (!mobileToolsOpen) {
+      return;
+    }
+
+    const drawer = mobileDrawerRef.current;
+
+    if (!drawer) {
+      return;
+    }
+
+    let frame = window.requestAnimationFrame(() => {
+      frame = 0;
+      setMobileDrawerHeight(Math.round(drawer.getBoundingClientRect().height));
+    });
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry) {
+        return;
+      }
+
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const nextHeight = Math.round(drawer.getBoundingClientRect().height);
+        setMobileDrawerHeight((current) =>
+          current === nextHeight ? current : nextHeight,
+        );
+      });
+    });
+    observer.observe(drawer);
+
+    return () => {
+      observer.disconnect();
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, [mobileToolsOpen]);
+
+  const handleMobileTextLayerAdded = React.useCallback(() => {
+    setMobileToolsOpen(false);
+    setMobileToolsExpanded(false);
+    setNotice("Text added — drag it on the photo. Reopen Text for styling.");
+  }, []);
 
   React.useEffect(() => {
     if (!notice) {
@@ -1003,7 +1055,24 @@ function EikasiaEditorShell() {
               ref={stageRef}
               onRequestUpload={requestUpload}
               onDropFile={handleFrameLoad}
+              mobileBottomInset={mobileToolsOpen ? mobileDrawerHeight : 0}
             />
+            {!mobileToolsOpen && activeTab === "text" && selectedTextId ? (
+              <div className="absolute inset-x-3 bottom-3 z-30 flex items-center justify-between gap-3 rounded-xl border border-[rgba(197,160,89,0.38)] bg-[rgba(12,12,15,0.92)] px-3 py-2.5 shadow-[0_14px_44px_rgba(0,0,0,0.48)] backdrop-blur-lg md:hidden">
+                <p className="min-w-0 text-[10px] leading-4 text-[var(--text-primary)]">
+                  Text selected. Drag it to position, or open its style controls.
+                </p>
+                <Button
+                  size="sm"
+                  variant="amber"
+                  className="h-9 shrink-0 rounded-lg px-3"
+                  onClick={() => stageRef.current?.editSelectedText()}
+                >
+                  <Pencil className="size-3.5" />
+                  Edit
+                </Button>
+              </div>
+            ) : null}
           </main>
 
           <aside className="hidden min-h-0 overflow-hidden border-l border-[var(--border)] bg-[rgba(17,17,20,0.97)] shadow-[-14px_0_40px_rgba(0,0,0,0.12)] md:col-start-3 md:row-start-1 md:block">
@@ -1030,20 +1099,21 @@ function EikasiaEditorShell() {
               <button
                 type="button"
                 aria-label="Close tool controls"
-                className="absolute inset-0 z-20 bg-black/25 md:hidden"
+                className="absolute inset-0 z-20 md:hidden"
                 onClick={() => {
                   setMobileToolsOpen(false);
                   setMobileToolsExpanded(false);
                 }}
               />
               <aside
-              aria-label={`${SIDEBAR_TABS.find((tab) => tab.id === activeTab)?.label} controls`}
-              className={cn(
-                "mobile-tool-drawer absolute inset-x-0 bottom-0 z-30 flex max-h-[calc(100%-0.5rem)] flex-col overflow-hidden rounded-t-2xl border-x border-t border-[var(--border)] bg-[#111114] shadow-[0_-22px_70px_rgba(0,0,0,0.68)] animate-[mobile-drawer-in_180ms_ease-out] md:hidden",
-                mobileToolsExpanded
-                  ? "h-[calc(100%-0.5rem)]"
-                  : "h-[clamp(240px,48dvh,420px)]",
-              )}
+                ref={mobileDrawerRef}
+                aria-label={`${SIDEBAR_TABS.find((tab) => tab.id === activeTab)?.label} controls`}
+                className={cn(
+                  "mobile-tool-drawer absolute inset-x-0 bottom-0 z-30 flex max-h-[calc(100%-0.5rem)] flex-col overflow-hidden rounded-t-2xl border-x border-t border-[var(--border)] bg-[#111114] shadow-[0_-22px_70px_rgba(0,0,0,0.68)] animate-[mobile-drawer-in_180ms_ease-out] md:hidden",
+                  mobileToolsExpanded
+                    ? "h-[min(68dvh,620px)] max-h-[calc(100%-5rem)]"
+                    : "h-[clamp(210px,42dvh,360px)] max-h-[calc(100%-9rem)]",
+                )}
               >
               <div className="shrink-0 border-b border-[var(--border)] px-3 pb-2">
                 <button
@@ -1101,6 +1171,7 @@ function EikasiaEditorShell() {
               <div className="min-h-0 flex-1">
                 <InspectorPanel
                   compact
+                  onTextLayerAdded={handleMobileTextLayerAdded}
                   onRequestEditSelectedText={() => {
                     setMobileToolsOpen(false);
                     setMobileToolsExpanded(false);

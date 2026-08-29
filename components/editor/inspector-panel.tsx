@@ -602,9 +602,11 @@ function createCustomTextLayer(
 function TextInspector({
   compact = false,
   onRequestEditSelectedText,
+  onTextLayerAdded,
 }: {
   compact?: boolean;
   onRequestEditSelectedText?: () => void;
+  onTextLayerAdded?: () => void;
 }) {
   const {
     project,
@@ -644,12 +646,15 @@ function TextInspector({
         );
       }
     }
+
+    onTextLayerAdded?.();
   };
 
   const handleAddCustomText = () => {
     const layer = createCustomTextLayer(project.crop.perspective);
     addTextLayer(layer);
     setSelectedTextId(layer.id);
+    onTextLayerAdded?.();
   };
 
   return (
@@ -1136,10 +1141,12 @@ export function InspectorPanel({
   className,
   compact = false,
   onRequestEditSelectedText,
+  onTextLayerAdded,
 }: {
   className?: string;
   compact?: boolean;
   onRequestEditSelectedText?: () => void;
+  onTextLayerAdded?: () => void;
 }) {
   const { activeTab } = useEditor();
 
@@ -1155,6 +1162,7 @@ export function InspectorPanel({
           <TextInspector
             compact={compact}
             onRequestEditSelectedText={onRequestEditSelectedText}
+            onTextLayerAdded={onTextLayerAdded}
           />
         ) : null}
         {activeTab === "overlays" ? <OverlaysInspector /> : null}

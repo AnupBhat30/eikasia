@@ -193,15 +193,25 @@ function useContainerSize(ref: React.RefObject<HTMLElement | null>) {
   return size;
 }
 
-function fitStage(natural: StageSize | null, available: StageSize): StageSize {
+function fitStage(
+  natural: StageSize | null,
+  available: StageSize,
+  constrainToAvailable = false,
+): StageSize {
   const minSide = Math.min(available.width, available.height);
   const compactness = clamp((760 - minSide) / 240, 0, 1);
   const minWidth = Math.round(320 - 100 * compactness);
   const minHeight = Math.round(220 - 60 * compactness);
   const horizontalPadding = Math.round(96 - 68 * compactness);
   const verticalPadding = Math.round(96 - 68 * compactness);
-  const maxWidth = Math.max(available.width - horizontalPadding, minWidth);
-  const maxHeight = Math.max(available.height - verticalPadding, minHeight);
+  const maxWidth = Math.max(
+    available.width - horizontalPadding,
+    constrainToAvailable ? 1 : minWidth,
+  );
+  const maxHeight = Math.max(
+    available.height - verticalPadding,
+    constrainToAvailable ? 1 : minHeight,
+  );
 
   if (!natural || !natural.width || !natural.height) {
     return {
@@ -872,8 +882,12 @@ export const CanvasStage = React.forwardRef<
   {
     onRequestUpload: () => void;
     onDropFile: (file: File) => void;
+    mobileBottomInset?: number;
   }
->(function CanvasStage({ onRequestUpload, onDropFile }, ref) {
+>(function CanvasStage(
+  { onRequestUpload, onDropFile, mobileBottomInset = 0 },
+  ref,
+) {
   const {
     project,
     activeTab,
@@ -966,6 +980,13 @@ export const CanvasStage = React.forwardRef<
   const latestActiveTabRef = React.useRef(activeTab);
 
   const containerSize = useContainerSize(containerRef);
+  const visibleContainerSize = React.useMemo(
+    () => ({
+      width: containerSize.width,
+      height: Math.max(0, containerSize.height - mobileBottomInset),
+    }),
+    [containerSize, mobileBottomInset],
+  );
   const cropGeometry = React.useMemo(
     () =>
       naturalSize
@@ -982,8 +1003,13 @@ export const CanvasStage = React.forwardRef<
     [cropGeometry, naturalSize, usesCroppedWorkspace],
   );
   const stageSize = React.useMemo(
-    () => fitStage(workspaceNaturalSize, containerSize),
-    [containerSize, workspaceNaturalSize],
+    () =>
+      fitStage(
+        workspaceNaturalSize,
+        visibleContainerSize,
+        mobileBottomInset > 0,
+      ),
+    [mobileBottomInset, visibleContainerSize, workspaceNaturalSize],
   );
   const latestStageSizeRef = React.useRef(stageSize);
 
@@ -2790,6 +2816,11 @@ export const CanvasStage = React.forwardRef<
           ref={viewportSurfaceRef}
           className="relative flex h-full w-full items-center justify-center px-3 py-3 sm:px-6 sm:py-6 lg:px-10 lg:py-10"
           onWheel={handleViewportWheel}
+          style={
+            mobileBottomInset
+              ? { paddingBottom: mobileBottomInset + 12 }
+              : undefined
+          }
         >
           <div className="absolute left-3 top-3 z-20 flex items-center gap-2 sm:left-6 sm:top-6 sm:gap-3">
             <div className="max-w-[56vw] border border-[var(--border)] bg-[rgba(10,10,10,0.82)] px-3 py-2 sm:max-w-[320px]">
