@@ -93,6 +93,53 @@ function PanelSection({
   );
 }
 
+function ResponsivePanelSection({
+  compact,
+  id,
+  icon: Icon,
+  title,
+  detail,
+  active = false,
+  children,
+}: {
+  compact: boolean;
+  id: string;
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  detail?: string;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  if (!compact) {
+    return (
+      <PanelSection icon={Icon} title={title} detail={detail}>
+        {children}
+      </PanelSection>
+    );
+  }
+
+  return (
+    <AccordionItem value={id}>
+      <AccordionTrigger className="min-h-12 py-3">
+        <span className="flex min-w-0 items-center gap-3">
+          <span className="flex size-8 shrink-0 items-center justify-center border border-[var(--border)] bg-[rgba(255,255,255,0.02)]">
+            <Icon className="size-4 text-[var(--accent)]" />
+          </span>
+          <span className="truncate">{title}</span>
+          {active ? (
+            <span className="size-1.5 shrink-0 rounded-full bg-[var(--accent)] shadow-[0_0_9px_rgba(197,160,89,0.7)]">
+              <span className="sr-only">Active</span>
+            </span>
+          ) : null}
+        </span>
+      </AccordionTrigger>
+      <AccordionContent>
+        <div className="space-y-4 pt-1">{children}</div>
+      </AccordionContent>
+    </AccordionItem>
+  );
+}
+
 const ToneCard = React.memo(function ToneCard({
   look,
   active,
@@ -186,9 +233,11 @@ function AdjustmentSliderRow({
         </div>
         <button
           type="button"
+          aria-label={`Reset ${control.label}`}
+          title={`Reset ${control.label}`}
           disabled={disabled}
           onClick={onReset}
-          className="flex size-7 items-center justify-center border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:border-[rgba(245,158,11,0.45)] hover:text-[var(--accent)] disabled:opacity-30"
+          className="flex size-9 shrink-0 items-center justify-center border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:border-[rgba(245,158,11,0.45)] hover:text-[var(--accent)] disabled:opacity-30"
         >
           <RotateCcw className="size-3.5" />
         </button>
@@ -238,7 +287,7 @@ function FiltersInspector({ compact = false }: { compact?: boolean }) {
                   aria-pressed={activeGroup.id === group.id}
                   onClick={() => setActiveGroupId(group.id)}
                   className={cn(
-                    "min-h-9 rounded-full border px-4 text-[10px] uppercase tracking-[0.16em] transition-colors",
+                    "min-h-10 rounded-full border px-4 text-[10px] uppercase tracking-[0.16em] transition-colors",
                     activeGroup.id === group.id
                       ? "border-[var(--accent)] bg-[var(--accent)] text-black"
                       : "border-[var(--border)] bg-[rgba(255,255,255,0.03)] text-[var(--text-muted)]",
@@ -580,7 +629,7 @@ function createCustomTextLayer(
   return {
     id: uid("text"),
     presetId: "custom",
-    text: "Double-click to edit",
+    text: "Your text",
     xPct: perspective.tl.x + 0.5 * cropW,
     yPct: perspective.tl.y + 0.5 * cropH,
     widthPct: 0.48 * cropW,
@@ -801,7 +850,7 @@ function OverlayPresetButton({
   );
 }
 
-function OverlaysInspector() {
+function OverlaysInspector({ compact = false }: { compact?: boolean }) {
   const { project, upsertOverlay, removeOverlay } = useEditor();
   const hasImage = Boolean(project.imageSrc);
 
@@ -827,9 +876,14 @@ function OverlaysInspector() {
       true,
     );
 
-  return (
-    <div className="space-y-6">
-      <PanelSection
+  const sections = (
+    <>
+      <ResponsivePanelSection
+        compact={compact}
+        id="grain"
+        active={
+          Boolean(activeOverlay.grain) || project.adjustments.grainAmount > 0
+        }
         icon={Layers3}
         title="Film Grain"
         detail="Stable seeded film texture with blend modes tuned for subtle or gritty analog grain."
@@ -855,9 +909,12 @@ function OverlaysInspector() {
         >
           Remove Grain
         </Button>
-      </PanelSection>
+      </ResponsivePanelSection>
 
-      <PanelSection
+      <ResponsivePanelSection
+        compact={compact}
+        id="light-leaks"
+        active={Boolean(activeOverlay.lightLeak)}
         icon={Layers3}
         title="Light Leaks"
         detail="Warm leak gradients rendered as additive overlays for damaged-roll bloom."
@@ -881,9 +938,12 @@ function OverlaysInspector() {
         >
           Clear Leak
         </Button>
-      </PanelSection>
+      </ResponsivePanelSection>
 
-      <PanelSection
+      <ResponsivePanelSection
+        compact={compact}
+        id="flare"
+        active={Boolean(activeOverlay.flare)}
         icon={Sparkles}
         title="Anamorphic Flare"
         detail="Blue cinema streak with adjustable intensity and vertical placement."
@@ -957,9 +1017,12 @@ function OverlaysInspector() {
             />
           </div>
         </div>
-      </PanelSection>
+      </ResponsivePanelSection>
 
-      <PanelSection
+      <ResponsivePanelSection
+        compact={compact}
+        id="borders"
+        active={Boolean(activeOverlay.border)}
         icon={Layers3}
         title="Film Borders"
         detail="Frame treatments ranging from Kodak sprockets to instant-film mats."
@@ -983,9 +1046,12 @@ function OverlaysInspector() {
         >
           Remove Border
         </Button>
-      </PanelSection>
+      </ResponsivePanelSection>
 
-      <PanelSection
+      <ResponsivePanelSection
+        compact={compact}
+        id="dust"
+        active={Boolean(activeOverlay.dust)}
         icon={Layers3}
         title="Dust & Scratches"
         detail="Add restrained analog imperfections on top of the frame."
@@ -1012,8 +1078,16 @@ function OverlaysInspector() {
             {activeOverlay.dust ? "Active" : "Enable"}
           </Button>
         </div>
-      </PanelSection>
-    </div>
+      </ResponsivePanelSection>
+    </>
+  );
+
+  return compact ? (
+    <Accordion type="single" collapsible defaultValue="grain">
+      {sections}
+    </Accordion>
+  ) : (
+    <div className="space-y-6">{sections}</div>
   );
 }
 
@@ -1117,20 +1191,22 @@ function CropInspector({ compact = false }: { compact?: boolean }) {
             </p>
           </div>
 
-          <div className="space-y-2">
-            <Button
-              variant="amber"
-              size="sm"
-              className="w-full"
-              onClick={() => setActiveTab("filters")}
-            >
-              Done — Use Crop
-            </Button>
-            <p className="text-center text-[10px] leading-4 tracking-[0.08em] text-[var(--text-muted)]">
-              The workspace will resize to this frame. Text outside it stays
-              clipped and will not be exported.
-            </p>
-          </div>
+          {!compact ? (
+            <div className="space-y-2">
+              <Button
+                variant="amber"
+                size="sm"
+                className="w-full"
+                onClick={() => setActiveTab("filters")}
+              >
+                Apply Crop
+              </Button>
+              <p className="text-center text-[10px] leading-4 tracking-[0.08em] text-[var(--text-muted)]">
+                The workspace will resize to this frame. Text outside it stays
+                clipped and will not be exported.
+              </p>
+            </div>
+          ) : null}
         </div>
       </PanelSection>
     </div>
@@ -1165,7 +1241,9 @@ export function InspectorPanel({
             onTextLayerAdded={onTextLayerAdded}
           />
         ) : null}
-        {activeTab === "overlays" ? <OverlaysInspector /> : null}
+        {activeTab === "overlays" ? (
+          <OverlaysInspector compact={compact} />
+        ) : null}
         {activeTab === "crop" ? <CropInspector compact={compact} /> : null}
       </div>
     </div>

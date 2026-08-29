@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Canvas, Shadow, Textbox } from "fabric";
-import { Trash2, Upload } from "lucide-react";
+import { Check, Trash2, Upload } from "lucide-react";
 
 import {
   ASPECT_RATIO_PRESETS,
@@ -2799,7 +2799,7 @@ export const CanvasStage = React.forwardRef<
                 Drop Your Frame
               </p>
               <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-[var(--text-muted)]">
-                PNG, JPG, WEBP up to 50MB
+                PNG, JPG, WEBP, AVIF, HEIC up to 50MB
               </p>
               <p className="mx-auto max-w-sm text-xs leading-5 text-[var(--text-muted)]">
                 Your photo stays in this browser while you apply film looks,
@@ -2822,7 +2822,7 @@ export const CanvasStage = React.forwardRef<
               : undefined
           }
         >
-          <div className="absolute left-3 top-3 z-20 flex items-center gap-2 sm:left-6 sm:top-6 sm:gap-3">
+          <div className="absolute left-3 top-3 z-20 flex select-none items-center gap-2 sm:left-6 sm:top-6 sm:gap-3">
             <div className="max-w-[56vw] border border-[var(--border)] bg-[rgba(10,10,10,0.82)] px-3 py-2 sm:max-w-[320px]">
               <p className="truncate font-mono text-[11px] uppercase tracking-[0.2em] text-[var(--accent)] sm:tracking-[0.24em]">
                 {project.imageName ?? "Untitled Frame"}
@@ -2858,7 +2858,7 @@ export const CanvasStage = React.forwardRef<
           >
             <div
               ref={captureRef}
-              className="relative overflow-hidden border border-[var(--border)] bg-[#111111] shadow-[0_28px_100px_rgba(0,0,0,0.6)]"
+              className="relative overflow-hidden bg-[#111111] shadow-[0_28px_100px_rgba(0,0,0,0.6)]"
               style={{ width: stageSize.width, height: stageSize.height }}
             >
               <div className="absolute inset-0" style={transformStyle}>
@@ -2949,7 +2949,7 @@ export const CanvasStage = React.forwardRef<
                                 onPointerDown={(event) =>
                                   startTextLayerResize(event, layer)
                                 }
-                                className="absolute -bottom-3 -right-3 size-6 cursor-nwse-resize rounded-full border border-black bg-[var(--accent)] shadow-[0_0_0_1px_rgba(245,158,11,0.35)] sm:-bottom-2 sm:-right-2 sm:size-4 sm:rounded-none"
+                                className="absolute -bottom-5 -right-5 size-10 cursor-nwse-resize rounded-full border border-transparent bg-transparent after:absolute after:left-1/2 after:top-1/2 after:size-4 after:-translate-x-1/2 after:-translate-y-1/2 after:rounded-full after:border after:border-black after:bg-[var(--accent)] after:content-[''] sm:-bottom-2 sm:-right-2 sm:size-4 sm:rounded-none sm:border-black sm:bg-[var(--accent)] sm:after:hidden"
                               />
                             ) : null}
                           </div>
@@ -3112,7 +3112,7 @@ export const CanvasStage = React.forwardRef<
                           setDragCorner(corner);
                         }}
                         aria-label={`Resize crop from ${corner} corner`}
-                        className="absolute z-40 size-6 -translate-x-1/2 -translate-y-1/2 rounded-full border border-black bg-[var(--accent)] shadow-[0_0_0_1px_rgba(245,158,11,0.35)] sm:size-4 sm:rounded-none"
+                        className="absolute z-40 size-10 -translate-x-1/2 -translate-y-1/2 rounded-full border border-transparent bg-transparent after:absolute after:left-1/2 after:top-1/2 after:size-5 after:-translate-x-1/2 after:-translate-y-1/2 after:rounded-full after:border after:border-black after:bg-[var(--accent)] after:content-[''] sm:size-4 sm:rounded-none sm:border-black sm:bg-[var(--accent)] sm:after:hidden"
                         style={{ left: `${point.x}%`, top: `${point.y}%` }}
                       />
                     ))}
@@ -3120,42 +3120,6 @@ export const CanvasStage = React.forwardRef<
                 ) : null}
               </div>
 
-              {project.imageSrc && (
-                <div className="pointer-events-none absolute inset-0 z-20 flex flex-col justify-between p-2 font-mono text-[9px] uppercase tracking-wider text-[var(--accent)] opacity-60">
-                  {/* Viewfinder corner brackets */}
-                  <div className="absolute left-2 top-2 h-3.5 w-3.5 border-l border-t border-[var(--accent)]" />
-                  <div className="absolute right-2 top-2 h-3.5 w-3.5 border-r border-t border-[var(--accent)]" />
-                  <div className="absolute left-2 bottom-2 h-3.5 w-3.5 border-l border-b border-[var(--accent)]" />
-                  <div className="absolute right-2 bottom-2 h-3.5 w-3.5 border-r border-b border-[var(--accent)]" />
-
-                  {/* Subtle center crosshair */}
-                  <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center">
-                    <div className="h-px w-3 bg-[var(--accent)] opacity-50" />
-                    <div className="absolute h-3 w-px bg-[var(--accent)] opacity-50" />
-                  </div>
-
-                  {/* Top telemetry */}
-                  <div className="flex justify-between px-3 pt-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--crimson)] animate-pulse" />
-                      <span>REC</span>
-                    </div>
-                    <div>
-                      <span>LOOK: {project.activeLookId ? project.activeLookId.toUpperCase() : "RAW BYPASS"}</span>
-                    </div>
-                  </div>
-
-                  {/* Bottom telemetry */}
-                  <div className="flex justify-between px-3 pb-1">
-                    <div>
-                      <span>RES: {stageSize.width ? `${Math.round(stageSize.width)}X${Math.round(stageSize.height)}` : "---"}</span>
-                    </div>
-                    <div>
-                      <span>LAYERS: {project.textLayers.length}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
 
@@ -3183,9 +3147,10 @@ export const CanvasStage = React.forwardRef<
             {selectedTextLayer ? (
               <PopoverContent
                 align="end"
-                className="max-h-[min(80dvh,720px)] w-[min(92vw,380px)] overflow-y-auto overscroll-contain rounded-2xl sm:rounded-none"
+                className="flex max-h-[min(80dvh,720px)] w-[min(92vw,380px)] flex-col overflow-hidden rounded-2xl p-0 sm:rounded-none"
               >
-                <div className="space-y-5">
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+                  <div className="space-y-5">
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--accent)]">
@@ -3496,6 +3461,17 @@ export const CanvasStage = React.forwardRef<
                       />
                     </label>
                   </div>
+                  </div>
+                </div>
+                <div className="shrink-0 border-t border-[var(--border)] bg-[var(--surface)] p-3">
+                  <Button
+                    variant="amber"
+                    className="h-11 w-full rounded-xl"
+                    onClick={() => handleTextPopoverOpenChange(false)}
+                  >
+                    <Check className="size-4" />
+                    Done Editing
+                  </Button>
                 </div>
               </PopoverContent>
             ) : null}
@@ -3519,11 +3495,16 @@ export const CanvasStage = React.forwardRef<
             </button>
           </div>
 
-          <div className="scrollbar-none absolute bottom-3 left-1/2 z-10 flex w-max max-w-[calc(100%-1.5rem)] -translate-x-1/2 touch-pan-x items-center justify-start gap-1 overflow-x-auto whitespace-nowrap rounded-full border border-[var(--border)] bg-[#0a0a0a] px-1.5 py-1.5 shadow-[0_10px_35px_rgba(0,0,0,0.45)] sm:bottom-6 sm:gap-2 sm:rounded-none sm:bg-[rgba(10,10,10,0.9)] sm:px-2 sm:py-2 sm:backdrop-blur-xl">
+          <div
+            role="toolbar"
+            aria-label="Canvas controls"
+            className="scrollbar-none absolute bottom-3 left-1/2 z-10 flex w-max max-w-[calc(100%-1.5rem)] -translate-x-1/2 touch-pan-x items-center justify-start gap-1 overflow-x-auto whitespace-nowrap rounded-full border border-[var(--border)] bg-[#0a0a0a] px-1.5 py-1.5 shadow-[0_10px_35px_rgba(0,0,0,0.45)] sm:bottom-6 sm:gap-2 sm:rounded-none sm:bg-[rgba(10,10,10,0.9)] sm:px-2 sm:py-2 sm:backdrop-blur-xl"
+          >
             {selectedTextLayer ? (
               <Button
                 size="sm"
                 variant="ghost"
+                aria-label="Delete selected text"
                 onClick={() => {
                   removeTextLayer(selectedTextLayer.id);
                   setSelectedTextId(null);
@@ -3536,6 +3517,7 @@ export const CanvasStage = React.forwardRef<
             {selectedTextLayer ? (
               <Button
                 size="sm"
+                aria-label="Edit selected text"
                 variant={
                   effectiveEditingTextId === selectedTextLayer.id ? "amber" : "outline"
                 }
@@ -3553,7 +3535,12 @@ export const CanvasStage = React.forwardRef<
                 Text
               </Button>
             ) : null}
-            <Button size="sm" variant="ghost" onClick={() => nudgeZoom(-0.1)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="Zoom out"
+              onClick={() => nudgeZoom(-0.1)}
+            >
               -
             </Button>
             <div
@@ -3562,7 +3549,12 @@ export const CanvasStage = React.forwardRef<
             >
               {Math.round(viewport.zoom * 100)}%
             </div>
-            <Button size="sm" variant="ghost" onClick={() => nudgeZoom(0.1)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="Zoom in"
+              onClick={() => nudgeZoom(0.1)}
+            >
               +
             </Button>
             <Button size="sm" variant="outline" onClick={resetViewport}>

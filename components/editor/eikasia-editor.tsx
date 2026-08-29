@@ -3,6 +3,7 @@
 import * as React from "react";
 import Image from "next/image";
 import {
+  Check,
   ChevronDown,
   ChevronUp,
   Crop,
@@ -72,6 +73,15 @@ const EXPORT_QUALITY_OPTIONS = [
 
 const MAX_SOURCE_PIXELS = 100_000_000;
 const MAX_SOURCE_SIDE = 24_000;
+const ACCEPTED_SOURCE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/avif",
+  "image/heic",
+  "image/heif",
+]);
+const ACCEPTED_SOURCE_EXTENSION = /\.(?:png|jpe?g|webp|avif|heic|heif)$/i;
 
 function loadImageDimensions(src: string) {
   return new Promise<{ width: number; height: number }>((resolve, reject) => {
@@ -645,10 +655,11 @@ function EikasiaEditorShell() {
 
   const handleFrameLoad = React.useCallback(
     async (file: File) => {
-      const acceptedTypes = ["image/png", "image/jpeg", "image/webp"];
-
-      if (!acceptedTypes.includes(file.type)) {
-        setNotice("Only PNG, JPG, and WEBP frames are supported.");
+      if (
+        !ACCEPTED_SOURCE_TYPES.has(file.type.toLowerCase()) &&
+        !ACCEPTED_SOURCE_EXTENSION.test(file.name)
+      ) {
+        setNotice("Use a PNG, JPG, WEBP, AVIF, HEIC, or HEIF image.");
         return;
       }
 
@@ -800,7 +811,7 @@ function EikasiaEditorShell() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp"
+        accept="image/png,image/jpeg,image/webp,image/avif,image/heic,image/heif,.heic,.heif"
         className="hidden"
         onChange={(event) => {
           const file = event.target.files?.[0];
@@ -1058,7 +1069,7 @@ function EikasiaEditorShell() {
               mobileBottomInset={mobileToolsOpen ? mobileDrawerHeight : 0}
             />
             {!mobileToolsOpen && activeTab === "text" && selectedTextId ? (
-              <div className="absolute inset-x-3 bottom-3 z-30 flex items-center justify-between gap-3 rounded-xl border border-[rgba(197,160,89,0.38)] bg-[rgba(12,12,15,0.92)] px-3 py-2.5 shadow-[0_14px_44px_rgba(0,0,0,0.48)] backdrop-blur-lg md:hidden">
+              <div className="absolute inset-x-3 bottom-[4.5rem] z-30 flex items-center justify-between gap-3 rounded-xl border border-[rgba(197,160,89,0.38)] bg-[rgba(12,12,15,0.92)] px-3 py-2.5 shadow-[0_14px_44px_rgba(0,0,0,0.48)] backdrop-blur-lg md:hidden">
                 <p className="min-w-0 text-[10px] leading-4 text-[var(--text-primary)]">
                   Text selected. Drag it to position, or open its style controls.
                 </p>
@@ -1124,7 +1135,7 @@ function EikasiaEditorShell() {
                 >
                   <span className="h-1 w-10 rounded-full bg-[#3a3a42]" />
                 </button>
-                <div className="flex h-9 items-center justify-between gap-3">
+                <div className="flex h-10 items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2.5">
                     {(() => {
                       const tool = SIDEBAR_TABS.find((tab) => tab.id === activeTab);
@@ -1141,9 +1152,13 @@ function EikasiaEditorShell() {
                     })()}
                   </div>
                   <div className="flex items-center gap-1">
+                    <span className="mr-1 hidden items-center gap-1.5 rounded-full border border-[var(--border)] px-2 py-1 font-mono text-[8px] uppercase tracking-[0.12em] text-[var(--text-muted)] min-[360px]:inline-flex">
+                      <span className="size-1.5 rounded-full bg-[var(--accent)]" />
+                      {activeTab === "crop" ? "Apply below" : "Live"}
+                    </span>
                     <button
                       type="button"
-                      className="flex size-9 items-center justify-center rounded-full text-[var(--text-muted)]"
+                      className="flex size-10 items-center justify-center rounded-full text-[var(--text-muted)]"
                       aria-label={mobileToolsExpanded ? "Collapse controls" : "Expand controls"}
                       onClick={() => setMobileToolsExpanded((expanded) => !expanded)}
                     >
@@ -1156,7 +1171,7 @@ function EikasiaEditorShell() {
                     </button>
                     <button
                       type="button"
-                      className="flex size-9 items-center justify-center rounded-full text-[var(--text-muted)]"
+                      className="flex size-10 items-center justify-center rounded-full text-[var(--text-muted)]"
                       aria-label="Close controls"
                       onClick={() => {
                         setMobileToolsOpen(false);
@@ -1179,6 +1194,29 @@ function EikasiaEditorShell() {
                   }}
                 />
               </div>
+              {activeTab === "crop" ? (
+                <div className="shrink-0 border-t border-[var(--border)] bg-[rgba(15,15,18,0.98)] p-3 shadow-[0_-12px_32px_rgba(0,0,0,0.34)]">
+                  <Button
+                    variant="amber"
+                    className="h-11 w-full rounded-xl"
+                    disabled={!project.imageSrc}
+                    onClick={() => {
+                      setActiveTab("filters");
+                      setMobileToolsOpen(false);
+                      setMobileToolsExpanded(false);
+                      setNotice(
+                        "Crop applied — the workspace and export now use this frame.",
+                      );
+                    }}
+                  >
+                    <Check className="size-4" />
+                    Apply Crop
+                  </Button>
+                  <p className="mt-1.5 text-center text-[9px] leading-4 tracking-[0.06em] text-[var(--text-muted)]">
+                    Only the visible crop will be exported.
+                  </p>
+                </div>
+              ) : null}
               </aside>
             </>
           ) : null}
@@ -1188,7 +1226,7 @@ function EikasiaEditorShell() {
           aria-label="Editor tools"
           className="relative z-40 shrink-0 border-t border-[var(--border)] bg-[#0c0c0f] pb-[env(safe-area-inset-bottom)] md:hidden"
         >
-          <div className="scrollbar-none flex h-[68px] touch-pan-x gap-1 overflow-x-auto px-1.5">
+          <div className="scrollbar-none flex h-[68px] touch-pan-x gap-0.5 overflow-x-auto px-1.5">
             {SIDEBAR_TABS.map((tab) => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;
@@ -1211,7 +1249,7 @@ function EikasiaEditorShell() {
                     }
                   }}
                   className={cn(
-                    "relative flex min-w-[72px] flex-1 flex-col items-center justify-center gap-1 rounded-xl px-2 text-[9px] uppercase tracking-[0.1em] transition-colors",
+                    "relative flex min-w-[60px] flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[9px] uppercase tracking-[0.08em] transition-colors",
                     active && mobileToolsOpen
                       ? "bg-[rgba(197,160,89,0.11)] text-[var(--accent)]"
                       : "text-[var(--text-muted)]",
