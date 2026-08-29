@@ -608,6 +608,10 @@ function EikasiaEditorShell() {
   const [mobileToolsExpanded, setMobileToolsExpanded] = React.useState(false);
   const mobileDrawerRef = React.useRef<HTMLElement>(null);
   const [mobileDrawerHeight, setMobileDrawerHeight] = React.useState(0);
+  const handleCanvasTextEditingRequested = React.useCallback(() => {
+    setMobileToolsOpen(false);
+    setMobileToolsExpanded(false);
+  }, []);
   const exportPreviewUrlRef = React.useRef<string | null>(null);
   const [preparedExport, setPreparedExport] =
     React.useState<PreparedExport | null>(null);
@@ -1293,6 +1297,7 @@ function EikasiaEditorShell() {
               ref={stageRef}
               onRequestUpload={requestUpload}
               onDropFile={handleFrameLoad}
+              onTextEditingRequested={handleCanvasTextEditingRequested}
               mobileBottomInset={mobileToolsOpen ? mobileDrawerHeight : 0}
             />
             {!mobileToolsOpen && activeTab === "text" && selectedTextId ? (

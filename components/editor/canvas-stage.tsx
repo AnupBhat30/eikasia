@@ -888,15 +888,22 @@ export const CanvasStage = React.forwardRef<
   {
     onRequestUpload: () => void;
     onDropFile: (file: File) => void;
+    onTextEditingRequested?: () => void;
     mobileBottomInset?: number;
   }
 >(function CanvasStage(
-  { onRequestUpload, onDropFile, mobileBottomInset = 0 },
+  {
+    onRequestUpload,
+    onDropFile,
+    onTextEditingRequested,
+    mobileBottomInset = 0,
+  },
   ref,
 ) {
   const {
     project,
     activeTab,
+    setActiveTab,
     selectedTextId,
     setSelectedTextId,
     setTextLayers,
@@ -1090,6 +1097,16 @@ export const CanvasStage = React.forwardRef<
     ? fromPercentage(selectedWorkspaceTextLayer.widthPct, stageSize.width)
     : 0;
 
+  const requestTextEditing = React.useCallback(
+    (layerId: string) => {
+      setSelectedTextId(layerId);
+      setActiveTab("text");
+      setEditingTextId(layerId);
+      onTextEditingRequested?.();
+    },
+    [onTextEditingRequested, setActiveTab, setSelectedTextId],
+  );
+
   const displayedPerspective = draftPerspective ?? project.crop.perspective;
 
   const startCropDrag = React.useCallback(() => {
@@ -1139,7 +1156,7 @@ export const CanvasStage = React.forwardRef<
       },
       editSelectedText: () => {
         if (selectedTextId) {
-          setEditingTextId(selectedTextId);
+          requestTextEditing(selectedTextId);
         }
       },
       centerTextInViewport: (layerId) => {
@@ -1184,7 +1201,7 @@ export const CanvasStage = React.forwardRef<
         height: latestStageSizeRef.current.height,
       }),
     }),
-    [exitCanvasTextEditing, selectedTextId, updateTextLayer],
+    [exitCanvasTextEditing, requestTextEditing, selectedTextId, updateTextLayer],
   );
 
   React.useEffect(() => {
@@ -1862,8 +1879,7 @@ export const CanvasStage = React.forwardRef<
         return;
       }
 
-      setSelectedTextId(layerId);
-      setEditingTextId(layerId);
+      requestTextEditing(layerId);
     };
 
     const commitLayers = () => {
@@ -1959,7 +1975,7 @@ export const CanvasStage = React.forwardRef<
       canvas.dispose();
       fabricCanvasRef.current = null;
     };
-  }, [exitCanvasTextEditing, setSelectedTextId, setTextLayers]);
+  }, [exitCanvasTextEditing, requestTextEditing, setSelectedTextId, setTextLayers]);
 
   React.useEffect(() => {
     const canvas = fabricCanvasRef.current;
@@ -2986,8 +3002,7 @@ export const CanvasStage = React.forwardRef<
                             onDoubleClick={(event) => {
                               event.preventDefault();
                               event.stopPropagation();
-                              setSelectedTextId(layer.id);
-                              setEditingTextId(layer.id);
+                              requestTextEditing(layer.id);
                             }}
                             onKeyDown={(event) => {
                               if (event.key !== "Enter" && event.key !== " ") {
@@ -2996,8 +3011,7 @@ export const CanvasStage = React.forwardRef<
 
                               event.preventDefault();
                               event.stopPropagation();
-                              setSelectedTextId(layer.id);
-                              setEditingTextId(layer.id);
+                              requestTextEditing(layer.id);
                             }}
                             className={cn(
                               "absolute -translate-x-1/2 -translate-y-1/2 cursor-move select-none border border-dashed px-1 py-0.5 outline-none touch-none",
@@ -3614,16 +3628,15 @@ export const CanvasStage = React.forwardRef<
                 variant={
                   effectiveEditingTextId === selectedTextLayer.id ? "amber" : "outline"
                 }
-                onClick={() =>
-                  setEditingTextId((current) => {
-                    if (current === selectedTextLayer.id) {
-                      exitCanvasTextEditing();
-                      return null;
-                    }
+                onClick={() => {
+                  if (effectiveEditingTextId === selectedTextLayer.id) {
+                    exitCanvasTextEditing();
+                    setEditingTextId(null);
+                    return;
+                  }
 
-                    return selectedTextLayer.id;
-                  })
-                }
+                  requestTextEditing(selectedTextLayer.id);
+                }}
               >
                 Text
               </Button>
