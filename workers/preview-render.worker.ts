@@ -30,6 +30,31 @@ interface PreviewWorkerScope {
 
 const workerScope = globalThis as unknown as PreviewWorkerScope;
 let source: ImageBitmap | null = null;
+let renderCanvas: OffscreenCanvas | null = null;
+let renderContext: OffscreenCanvasRenderingContext2D | null = null;
+
+function getRenderSurface(width: number, height: number) {
+  if (!renderCanvas) {
+    renderCanvas = new OffscreenCanvas(width, height);
+    renderContext = renderCanvas.getContext("2d", {
+      willReadFrequently: true,
+      colorSpace: "srgb",
+    });
+
+    if (!renderContext) {
+      renderCanvas = null;
+      throw new Error("Unable to create preview rendering context");
+    }
+  } else if (renderCanvas.width !== width || renderCanvas.height !== height) {
+    // Resizing clears the backing store while retaining the context. Reusing
+    // the surface avoids allocating a full preview canvas for every slider
+    // update and substantially reduces garbage-collection pressure.
+    renderCanvas.width = width;
+    renderCanvas.height = height;
+  }
+
+  return { canvas: renderCanvas, context: renderContext! };
+}
 
 workerScope.onmessage = (event) => {
   if (event.data.type === "init") {
@@ -46,15 +71,7 @@ workerScope.onmessage = (event) => {
       throw new Error("Preview source is not ready");
     }
 
-    const canvas = new OffscreenCanvas(width, height);
-    const context = canvas.getContext("2d", {
-      willReadFrequently: true,
-      colorSpace: "srgb",
-    });
-
-    if (!context) {
-      throw new Error("Unable to create preview rendering context");
-    }
+    const { canvas, context } = getRenderSurface(width, height);
 
     renderProjectRaster({
       ctx: context,

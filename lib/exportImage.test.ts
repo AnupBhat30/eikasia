@@ -19,6 +19,7 @@ import {
   RENDERED_BORDER_PRESET_IDS,
   resolveNoiseReductionParameters,
   resolveEffectiveAdjustments,
+  resolveOverlayLayers,
   toneMapFilmic,
 } from "@/lib/exportImage";
 
@@ -220,5 +221,27 @@ describe("filter color safety", () => {
     expect(medium.lumaMix).toBeLessThan(high.lumaMix);
     expect(high.lumaMix).toBeLessThan(0.9);
     expect(high.chromaMix).toBeLessThan(1);
+  });
+
+  test("manual grain starts continuously and applies its size exactly once", () => {
+    const project = createInitialProjectState();
+
+    project.adjustments.grainAmount = 1;
+    project.adjustments.grainSize = 72;
+    const low = resolveOverlayLayers(project).effectLayers[0];
+
+    project.adjustments.grainAmount = 50;
+    const medium = resolveOverlayLayers(project).effectLayers[0];
+
+    project.adjustments.grainAmount = 100;
+    const high = resolveOverlayLayers(project).effectLayers[0];
+
+    expect(low.type).toBe("grain");
+    expect(low.opacity).toBeLessThan(0.005);
+    expect(low.size).toBe(72);
+    expect(low.opacity).toBeLessThan(medium.opacity);
+    expect(medium.opacity).toBeLessThan(high.opacity);
+    expect(low.intensity).toBeLessThan(medium.intensity ?? 0);
+    expect(medium.intensity ?? 0).toBeLessThan(high.intensity ?? 0);
   });
 });

@@ -352,45 +352,53 @@ export function resolveEffectiveAdjustments(
   return resolved;
 }
 
-function resolveOverlayLayers(state: RasterProjectState) {
+export function resolveOverlayLayers(state: RasterProjectState) {
+  const manualGrainAmount = clamp(state.adjustments.grainAmount, 0, 100);
   const grainLayer =
     state.overlayLayers.find((layer) => layer.type === "grain") ??
-    (state.adjustments.grainAmount > 0
+    (manualGrainAmount > 0
       ? {
           id: "grain-adjustment",
           type: "grain" as const,
           presetId: "grain-subtle",
-          opacity: 0.14,
+          opacity: 0,
           blendMode: "soft-light",
-          intensity: 24,
-          size: state.adjustments.grainSize,
+          intensity: 0,
+          size: DEFAULT_ADJUSTMENTS.grainSize,
         }
       : null);
 
   const mergedGrainLayer = grainLayer
-    ? {
-        ...grainLayer,
-        opacity: clamp(
-          (grainLayer.opacity ?? 0.14) *
-            (grainLayer.id === AUTO_GRAIN_LAYER_ID
-              ? clamp(state.filterIntensity / 100, 0, 1)
-              : 1) +
-            state.adjustments.grainAmount / 260,
-          0,
-          0.72,
-        ),
-        intensity: clamp(
-          (grainLayer.intensity ?? 24) + state.adjustments.grainAmount * 0.35,
-          0,
-          100,
-        ),
-        size: clamp(
-          (grainLayer.size ?? DEFAULT_ADJUSTMENTS.grainSize) +
-            (state.adjustments.grainSize - DEFAULT_ADJUSTMENTS.grainSize),
-          0,
-          100,
-        ),
-      }
+    ? grainLayer.id === "grain-adjustment"
+      ? {
+          ...grainLayer,
+          opacity: clamp(manualGrainAmount / 220, 0, 0.5),
+          intensity: clamp(manualGrainAmount * 0.65, 0, 100),
+          size: clamp(state.adjustments.grainSize, 0, 100),
+        }
+      : {
+          ...grainLayer,
+          opacity: clamp(
+            (grainLayer.opacity ?? 0.14) *
+              (grainLayer.id === AUTO_GRAIN_LAYER_ID
+                ? clamp(state.filterIntensity / 100, 0, 1)
+                : 1) +
+              manualGrainAmount / 260,
+            0,
+            0.72,
+          ),
+          intensity: clamp(
+            (grainLayer.intensity ?? 24) + manualGrainAmount * 0.35,
+            0,
+            100,
+          ),
+          size: clamp(
+            (grainLayer.size ?? DEFAULT_ADJUSTMENTS.grainSize) +
+              (state.adjustments.grainSize - DEFAULT_ADJUSTMENTS.grainSize),
+            0,
+            100,
+          ),
+        }
     : null;
 
   const baseLayers = state.overlayLayers.filter((layer) => layer.type !== "grain");
@@ -465,12 +473,22 @@ export async function exportProjectImage(
     // Create offscreen canvas for export
     const canvas = createWorkingCanvas(width, height);
     const ctx = getWorkingContext(canvas);
+    const hasCropTransform =
+      Math.abs(state.crop.rotation) > 0.000_001 ||
+      state.crop.flipX ||
+      state.crop.flipY;
+    const compositionCanvas = hasCropTransform
+      ? createWorkingCanvas(width, height)
+      : canvas;
+    const compositionContext = hasCropTransform
+      ? getWorkingContext(compositionCanvas)
+      : ctx;
 
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
+    compositionContext.imageSmoothingEnabled = true;
+    compositionContext.imageSmoothingQuality = "high";
 
     renderProjectRaster({
-      ctx,
+      ctx: compositionContext,
       state,
       source: sourceImg,
       width,
@@ -482,18 +500,13 @@ export async function exportProjectImage(
           state.crop,
           renderWidth,
           renderHeight,
+          false,
         ),
     });
 
-    // Composite text layers with proper blend modes and crop transform (rotation/flip)
-    ctx.save();
-    const centerX = width / 2;
-    const centerY = height / 2;
-    ctx.translate(centerX, centerY);
-    ctx.rotate((state.crop.rotation * Math.PI) / 180);
-    ctx.scale(state.crop.flipX ? -1 : 1, state.crop.flipY ? -1 : 1);
-    ctx.translate(-centerX, -centerY);
-
+    // Text is added to the same untransformed composition as raster effects.
+    // The completed composition is transformed once below, matching the
+    // editor's shared CSS transform for image, overlays, and text.
     const fabric = state.textLayers.length ? await import("fabric") : null;
 
     for (const layer of state.textLayers) {
@@ -514,10 +527,32 @@ export async function exportProjectImage(
           (((layer.fontSizePct / 100) * sourceHeight) / cropGeometry.height) * 100,
       };
       if (fabric) {
-        compositeTextLayer(ctx, mappedLayer, width, height, fabric, stageSize);
+        compositeTextLayer(
+          compositionContext,
+          mappedLayer,
+          width,
+          height,
+          fabric,
+          stageSize,
+        );
       }
     }
-    ctx.restore();
+
+    if (hasCropTransform) {
+      const centerX = width / 2;
+      const centerY = height / 2;
+      ctx.save();
+      ctx.fillStyle = "#111111";
+      ctx.fillRect(0, 0, width, height);
+      ctx.translate(centerX, centerY);
+      ctx.rotate((state.crop.rotation * Math.PI) / 180);
+      ctx.scale(state.crop.flipX ? -1 : 1, state.crop.flipY ? -1 : 1);
+      ctx.translate(-centerX, -centerY);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(compositionCanvas, 0, 0, width, height);
+      ctx.restore();
+    }
 
     // Encode once, then let the UI decide whether to preview, share, or
     // download. Native mobile sharing requires a fresh user activation, so it
@@ -1822,7 +1857,9 @@ function compositeTextLayer(
 
   // Composite the rendered temporary canvas onto the export context
   ctx.save();
-  ctx.globalAlpha = layer.opacity;
+  // Fabric already applies the layer opacity while drawing the textbox and
+  // its background. Applying it again here made exports more transparent than
+  // both editor renderers.
   ctx.globalCompositeOperation = blendModeToComposite(layer.blendMode);
   ctx.drawImage(tempCanvasEl, 0, 0);
   ctx.restore();

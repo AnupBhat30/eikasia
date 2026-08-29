@@ -48,6 +48,8 @@ import {
 import {
   canvasViewportTransform,
   normalizeCanvasViewport,
+  normalizeWheelDeltaY,
+  screenDeltaToCanvasPercentage,
   translateCanvasViewport,
   zoomCanvasViewportAtPoint,
   type CanvasViewport,
@@ -603,29 +605,31 @@ function FilmFrameIcon() {
   );
 }
 
-function mapScreenToImage(
-  screenXPct: number,
-  screenYPct: number,
+function mapClientPointToCanvas(
+  clientX: number,
+  clientY: number,
+  bounds: DOMRect,
+  stageSize: StageSize,
+  viewportZoom: number,
   rotation: number,
   flipX: boolean,
   flipY: boolean,
 ): CropPoint {
-  let dx = screenXPct - 50;
-  let dy = screenYPct - 50;
-
-  if (flipX) dx = -dx;
-  if (flipY) dy = -dy;
-
-  const rad = (-rotation * Math.PI) / 180;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-
-  const rx = dx * cos - dy * sin;
-  const ry = dx * sin + dy * cos;
+  const delta = screenDeltaToCanvasPercentage(
+    {
+      x: clientX - (bounds.left + bounds.width / 2),
+      y: clientY - (bounds.top + bounds.height / 2),
+    },
+    stageSize,
+    viewportZoom,
+    rotation,
+    flipX,
+    flipY,
+  );
 
   return {
-    x: rx + 50,
-    y: ry + 50,
+    x: delta.x + 50,
+    y: delta.y + 50,
   };
 }
 
@@ -956,14 +960,7 @@ export const CanvasStage = React.forwardRef<
     offsetY: 0,
   });
   const [editingTextId, setEditingTextId] = React.useState<string | null>(null);
-  const [draftTextLayerUpdates, setDraftTextLayerUpdates] = React.useState<
-    Record<string, Partial<TextLayer>>
-  >({});
-  const textDraftRafRef = React.useRef(0);
-  const pendingTextDraftRef = React.useRef<{
-    layerId: string;
-    updates: Partial<TextLayer>;
-  } | null>(null);
+  const textLayerElementsRef = React.useRef(new Map<string, HTMLDivElement>());
   const [spacePressed, setSpacePressed] = React.useState(false);
   const activeTouchPointersRef = React.useRef(
     new Map<number, ViewportPoint>(),
@@ -973,9 +970,7 @@ export const CanvasStage = React.forwardRef<
     viewport: CanvasViewport;
     centre: ViewportPoint;
   } | null>(null);
-  const viewportRafRef = React.useRef(0);
   const viewportCommitTimeoutRef = React.useRef(0);
-  const pendingViewportRef = React.useRef<CanvasViewport | null>(null);
   const viewportGestureActiveRef = React.useRef(false);
   const viewportRectRef = React.useRef<DOMRect | null>(null);
   const latestViewportRef = React.useRef(viewport);
@@ -1214,17 +1209,11 @@ export const CanvasStage = React.forwardRef<
 
   React.useEffect(
     () => () => {
-      if (viewportRafRef.current) {
-        window.cancelAnimationFrame(viewportRafRef.current);
-      }
       if (viewportCommitTimeoutRef.current) {
         window.clearTimeout(viewportCommitTimeoutRef.current);
       }
       if (perspectiveRenderRafRef.current) {
         window.cancelAnimationFrame(perspectiveRenderRafRef.current);
-      }
-      if (textDraftRafRef.current) {
-        window.cancelAnimationFrame(textDraftRafRef.current);
       }
     },
     [],
@@ -1236,27 +1225,17 @@ export const CanvasStage = React.forwardRef<
       // This ref is the camera source of truth during an interaction. Updating
       // it synchronously avoids accumulating deltas against a frame-old value.
       latestViewportRef.current = finalViewport;
-      pendingViewportRef.current = finalViewport;
 
-      if (viewportRafRef.current) {
-        return finalViewport;
+      // pointermove and wheel events are already coalesced near the browser's
+      // paint cycle. Applying one transform here avoids adding a full frame of
+      // latency and does not involve React, layout reads, or raster rendering.
+      const node = viewportTransformRef.current;
+      if (node) {
+        node.style.transform = canvasViewportTransform(finalViewport);
       }
-
-      viewportRafRef.current = window.requestAnimationFrame(() => {
-        viewportRafRef.current = 0;
-        const pendingViewport = pendingViewportRef.current;
-        pendingViewportRef.current = null;
-
-        if (pendingViewport) {
-          const node = viewportTransformRef.current;
-          if (node) {
-            node.style.transform = canvasViewportTransform(pendingViewport);
-          }
-          if (zoomReadoutRef.current) {
-            zoomReadoutRef.current.textContent = `${Math.round(pendingViewport.zoom * 100)}%`;
-          }
-        }
-      });
+      if (zoomReadoutRef.current) {
+        zoomReadoutRef.current.textContent = `${Math.round(finalViewport.zoom * 100)}%`;
+      }
 
       return finalViewport;
     },
@@ -1347,39 +1326,23 @@ export const CanvasStage = React.forwardRef<
     pendingPerspectiveRenderRef.current = null;
   }, []);
 
-  const queueTextDraftRender = React.useCallback(
+  const applyTextDraftToElement = React.useCallback(
     (layerId: string, updates: Partial<TextLayer>) => {
-      pendingTextDraftRef.current = { layerId, updates };
+      const node = textLayerElementsRef.current.get(layerId);
+      if (!node) return;
 
-      if (textDraftRafRef.current) {
-        return;
+      if (updates.xPct !== undefined) node.style.left = `${updates.xPct}%`;
+      if (updates.yPct !== undefined) node.style.top = `${updates.yPct}%`;
+      if (updates.widthPct !== undefined) node.style.width = `${updates.widthPct}%`;
+      if (updates.fontSizePct !== undefined) {
+        node.style.fontSize = `${fromPercentage(
+          updates.fontSizePct,
+          latestStageSizeRef.current.height,
+        )}px`;
       }
-
-      textDraftRafRef.current = window.requestAnimationFrame(() => {
-        textDraftRafRef.current = 0;
-        const pending = pendingTextDraftRef.current;
-        pendingTextDraftRef.current = null;
-        if (pending) {
-          setDraftTextLayerUpdates((current) => ({
-            ...current,
-            [pending.layerId]: {
-              ...current[pending.layerId],
-              ...pending.updates,
-            },
-          }));
-        }
-      });
     },
     [],
   );
-
-  const cancelTextDraftRender = React.useCallback(() => {
-    if (textDraftRafRef.current) {
-      window.cancelAnimationFrame(textDraftRafRef.current);
-      textDraftRafRef.current = 0;
-    }
-    pendingTextDraftRef.current = null;
-  }, []);
 
   React.useEffect(() => {
     if (!effectiveEditingTextId) {
@@ -2113,13 +2076,21 @@ export const CanvasStage = React.forwardRef<
     if (!stageNode) return;
 
     const rect = stageNode.getBoundingClientRect();
-    const screenXPct = ((event.clientX - rect.left) / rect.width) * 100;
-    const screenYPct = ((event.clientY - rect.top) / rect.height) * 100;
+    const localPoint = mapClientPointToCanvas(
+      event.clientX,
+      event.clientY,
+      rect,
+      stageSize,
+      latestViewportRef.current.zoom,
+      project.crop.rotation,
+      project.crop.flipX,
+      project.crop.flipY,
+    );
 
     const cloned = structuredClone(project.crop.perspective);
     cropBoxDragStartRef.current = {
-      pointerX: screenXPct,
-      pointerY: screenYPct,
+      pointerX: localPoint.x,
+      pointerY: localPoint.y,
       perspective: cloned,
     };
     draftPerspectiveRef.current = cloned;
@@ -2145,16 +2116,15 @@ export const CanvasStage = React.forwardRef<
       }
 
       const rect = stageNode.getBoundingClientRect();
-      const screenXPct = ((event.clientX - rect.left) / rect.width) * 100;
-      const screenYPct = ((event.clientY - rect.top) / rect.height) * 100;
-
-      // Map to local unrotated image space
-      const localPt = mapScreenToImage(
-        screenXPct,
-        screenYPct,
+      const localPt = mapClientPointToCanvas(
+        event.clientX,
+        event.clientY,
+        rect,
+        stageSize,
+        latestViewportRef.current.zoom,
         project.crop.rotation,
         project.crop.flipX,
-        project.crop.flipY
+        project.crop.flipY,
       );
 
       const activePreset = ASPECT_RATIO_PRESETS.find(
@@ -2189,10 +2159,12 @@ export const CanvasStage = React.forwardRef<
 
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", handleUp, { once: true });
+    window.addEventListener("pointercancel", handleUp, { once: true });
 
     return () => {
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
     };
   }, [
     dragCorner,
@@ -2203,6 +2175,7 @@ export const CanvasStage = React.forwardRef<
     project.crop.rotation,
     project.crop.flipX,
     project.crop.flipY,
+    stageSize,
   ]);
 
   React.useEffect(() => {
@@ -2222,16 +2195,15 @@ export const CanvasStage = React.forwardRef<
       }
 
       const rect = stageNode.getBoundingClientRect();
-      const screenXPct = ((event.clientX - rect.left) / rect.width) * 100;
-      const screenYPct = ((event.clientY - rect.top) / rect.height) * 100;
-
-      // Map to local unrotated image space
-      const localPt = mapScreenToImage(
-        screenXPct,
-        screenYPct,
+      const localPt = mapClientPointToCanvas(
+        event.clientX,
+        event.clientY,
+        rect,
+        stageSize,
+        latestViewportRef.current.zoom,
         project.crop.rotation,
         project.crop.flipX,
-        project.crop.flipY
+        project.crop.flipY,
       );
 
       const activePreset = ASPECT_RATIO_PRESETS.find(
@@ -2266,10 +2238,12 @@ export const CanvasStage = React.forwardRef<
 
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", handleUp, { once: true });
+    window.addEventListener("pointercancel", handleUp, { once: true });
 
     return () => {
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
     };
   }, [
     dragEdge,
@@ -2280,6 +2254,7 @@ export const CanvasStage = React.forwardRef<
     project.crop.rotation,
     project.crop.flipX,
     project.crop.flipY,
+    stageSize,
   ]);
 
   React.useEffect(() => {
@@ -2300,29 +2275,19 @@ export const CanvasStage = React.forwardRef<
       }
 
       const rect = stageNode.getBoundingClientRect();
-      const screenXPct = ((event.clientX - rect.left) / rect.width) * 100;
-      const screenYPct = ((event.clientY - rect.top) / rect.height) * 100;
-
-      // Map current cursor to local space
-      const localPt = mapScreenToImage(
-        screenXPct,
-        screenYPct,
+      const localPt = mapClientPointToCanvas(
+        event.clientX,
+        event.clientY,
+        rect,
+        stageSize,
+        latestViewportRef.current.zoom,
         project.crop.rotation,
         project.crop.flipX,
-        project.crop.flipY
+        project.crop.flipY,
       );
 
-      // Map start cursor to local space
-      const startLocalPt = mapScreenToImage(
-        start.pointerX,
-        start.pointerY,
-        project.crop.rotation,
-        project.crop.flipX,
-        project.crop.flipY
-      );
-
-      const dxPct = localPt.x - startLocalPt.x;
-      const dyPct = localPt.y - startLocalPt.y;
+      const dxPct = localPt.x - start.pointerX;
+      const dyPct = localPt.y - start.pointerY;
 
       const xs = [
         start.perspective.tl.x,
@@ -2381,10 +2346,12 @@ export const CanvasStage = React.forwardRef<
 
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", handleUp, { once: true });
+    window.addEventListener("pointercancel", handleUp, { once: true });
 
     return () => {
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
     };
   }, [
     isMovingCropBox,
@@ -2394,6 +2361,7 @@ export const CanvasStage = React.forwardRef<
     project.crop.rotation,
     project.crop.flipX,
     project.crop.flipY,
+    stageSize,
   ]);
 
   const clipPath = React.useMemo(
@@ -2434,21 +2402,12 @@ export const CanvasStage = React.forwardRef<
   };
 
   const getVisibleTextLayer = React.useCallback(
-    (layer: TextLayer): TextLayer => ({
-      ...mapLayerToWorkspace(layer),
-      ...draftTextLayerUpdates[layer.id],
-    }),
-    [draftTextLayerUpdates, mapLayerToWorkspace],
+    (layer: TextLayer): TextLayer => mapLayerToWorkspace(layer),
+    [mapLayerToWorkspace],
   );
 
   const commitTextLayerDraft = React.useCallback(
     (layerId: string, updates: Partial<TextLayer>) => {
-      setDraftTextLayerUpdates((current) => {
-        const next = { ...current };
-        delete next[layerId];
-        return next;
-      });
-
       if (!Object.keys(updates).length) {
         return;
       }
@@ -2468,17 +2427,12 @@ export const CanvasStage = React.forwardRef<
       event.stopPropagation();
       setSelectedTextId(layer.id);
       setEditingTextId(null);
+      event.currentTarget.setPointerCapture?.(event.pointerId);
 
-      const stageNode = captureRef.current;
-
-      if (!stageNode) {
-        return;
-      }
-
-      const rect = stageNode.getBoundingClientRect();
       const startX = event.clientX;
       const startY = event.clientY;
       const startLayer = getVisibleTextLayer(layer);
+      const viewportZoom = latestViewportRef.current.zoom;
       let nextUpdates: Partial<TextLayer> = {};
 
       const handleMove = (moveEvent: PointerEvent) => {
@@ -2487,37 +2441,62 @@ export const CanvasStage = React.forwardRef<
         }
 
         moveEvent.preventDefault();
-        const dxPct = ((moveEvent.clientX - startX) / rect.width) * 100;
-        const dyPct = ((moveEvent.clientY - startY) / rect.height) * 100;
+        const coalescedEvents = moveEvent.getCoalescedEvents?.() ?? [];
+        const pointer = coalescedEvents.at(-1) ?? moveEvent;
+        const delta = screenDeltaToCanvasPercentage(
+          {
+            x: pointer.clientX - startX,
+            y: pointer.clientY - startY,
+          },
+          stageSize,
+          viewportZoom,
+          project.crop.rotation,
+          project.crop.flipX,
+          project.crop.flipY,
+        );
         nextUpdates = {
-          xPct: clamp(startLayer.xPct + dxPct, 0, 100),
-          yPct: clamp(startLayer.yPct + dyPct, 0, 100),
+          xPct: clamp(startLayer.xPct + delta.x, 0, 100),
+          yPct: clamp(startLayer.yPct + delta.y, 0, 100),
         };
 
-        queueTextDraftRender(layer.id, nextUpdates);
+        // Pointer moves are already synchronized near the browser's paint
+        // cycle. Writing this single element immediately avoids adding an
+        // extra animation-frame of input latency while still keeping React
+        // and the raster pipeline out of the hot path.
+        applyTextDraftToElement(layer.id, nextUpdates);
       };
 
       const handleUp = () => {
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleUp);
-        cancelTextDraftRender();
+        window.removeEventListener("pointercancel", handleCancel);
         commitTextLayerDraft(
           layer.id,
           viewportGestureActiveRef.current ? {} : nextUpdates,
         );
       };
+      const handleCancel = () => {
+        applyTextDraftToElement(layer.id, {
+          xPct: startLayer.xPct,
+          yPct: startLayer.yPct,
+        });
+        nextUpdates = {};
+        handleUp();
+      };
 
       window.addEventListener("pointermove", handleMove);
       window.addEventListener("pointerup", handleUp, { once: true });
+      window.addEventListener("pointercancel", handleCancel, { once: true });
     },
     [
+      applyTextDraftToElement,
       commitTextLayerDraft,
-      cancelTextDraftRender,
       getVisibleTextLayer,
-      queueTextDraftRender,
+      project.crop.flipX,
+      project.crop.flipY,
+      project.crop.rotation,
       setSelectedTextId,
-      stageSize.height,
-      stageSize.width,
+      stageSize,
     ],
   );
 
@@ -2531,17 +2510,12 @@ export const CanvasStage = React.forwardRef<
       event.stopPropagation();
       setSelectedTextId(layer.id);
       setEditingTextId(null);
+      event.currentTarget.setPointerCapture?.(event.pointerId);
 
-      const stageNode = captureRef.current;
-
-      if (!stageNode) {
-        return;
-      }
-
-      const rect = stageNode.getBoundingClientRect();
       const startX = event.clientX;
       const startY = event.clientY;
       const startLayer = getVisibleTextLayer(layer);
+      const viewportZoom = latestViewportRef.current.zoom;
       let nextUpdates: Partial<TextLayer> = {};
 
       const handleMove = (moveEvent: PointerEvent) => {
@@ -2550,37 +2524,58 @@ export const CanvasStage = React.forwardRef<
         }
 
         moveEvent.preventDefault();
-        const dxPct = ((moveEvent.clientX - startX) / rect.width) * 100;
-        const dyPct = ((moveEvent.clientY - startY) / rect.height) * 100;
+        const coalescedEvents = moveEvent.getCoalescedEvents?.() ?? [];
+        const pointer = coalescedEvents.at(-1) ?? moveEvent;
+        const delta = screenDeltaToCanvasPercentage(
+          {
+            x: pointer.clientX - startX,
+            y: pointer.clientY - startY,
+          },
+          stageSize,
+          viewportZoom,
+          project.crop.rotation,
+          project.crop.flipX,
+          project.crop.flipY,
+        );
         nextUpdates = {
-          widthPct: clamp(startLayer.widthPct + dxPct * 2, 8, 100),
-          fontSizePct: clamp(startLayer.fontSizePct + dyPct, 1.2, 42),
+          widthPct: clamp(startLayer.widthPct + delta.x * 2, 8, 100),
+          fontSizePct: clamp(startLayer.fontSizePct + delta.y, 1.2, 42),
         };
 
-        queueTextDraftRender(layer.id, nextUpdates);
+        applyTextDraftToElement(layer.id, nextUpdates);
       };
 
       const handleUp = () => {
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleUp);
-        cancelTextDraftRender();
+        window.removeEventListener("pointercancel", handleCancel);
         commitTextLayerDraft(
           layer.id,
           viewportGestureActiveRef.current ? {} : nextUpdates,
         );
       };
+      const handleCancel = () => {
+        applyTextDraftToElement(layer.id, {
+          widthPct: startLayer.widthPct,
+          fontSizePct: startLayer.fontSizePct,
+        });
+        nextUpdates = {};
+        handleUp();
+      };
 
       window.addEventListener("pointermove", handleMove);
       window.addEventListener("pointerup", handleUp, { once: true });
+      window.addEventListener("pointercancel", handleCancel, { once: true });
     },
     [
+      applyTextDraftToElement,
       commitTextLayerDraft,
-      cancelTextDraftRender,
       getVisibleTextLayer,
-      queueTextDraftRender,
+      project.crop.flipX,
+      project.crop.flipY,
+      project.crop.rotation,
       setSelectedTextId,
-      stageSize.height,
-      stageSize.width,
+      stageSize,
     ],
   );
 
@@ -2747,6 +2742,16 @@ export const CanvasStage = React.forwardRef<
   const handleViewportPointerEnd = (
     event: React.PointerEvent<HTMLDivElement>,
   ) => {
+    if (event.type === "pointercancel") {
+      activeTouchPointersRef.current.clear();
+      pointerPinchRef.current = null;
+      panOriginRef.current = null;
+      viewportGestureActiveRef.current = false;
+      event.currentTarget.style.cursor = "";
+      commitViewport();
+      return;
+    }
+
     if (event.pointerType === "touch") {
       const pointers = activeTouchPointersRef.current;
       const wasViewportGesture = viewportGestureActiveRef.current;
@@ -2816,13 +2821,11 @@ export const CanvasStage = React.forwardRef<
 
     const currentViewport = latestViewportRef.current;
     const pageSize = viewportSurfaceRef.current?.clientHeight ?? 800;
-    const deltaPixels =
-      event.deltaY *
-      (event.deltaMode === WheelEvent.DOM_DELTA_LINE
-        ? 16
-        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
-          ? pageSize
-          : 1);
+    const deltaPixels = normalizeWheelDeltaY(
+      event.deltaY,
+      event.deltaMode,
+      pageSize,
+    );
     const sensitivity = event.ctrlKey ? 0.008 : 0.0018;
     const nextZoom = currentViewport.zoom * Math.exp(-deltaPixels * sensitivity);
     const focalPoint = getViewportPoint(event.clientX, event.clientY);
@@ -2960,10 +2963,21 @@ export const CanvasStage = React.forwardRef<
                           stageSize.height,
                         );
                         const isSelected = selectedTextId === layer.id;
+                        const textShadow = getScaledTextShadowOptions(
+                          visibleLayer.shadowPreset,
+                          visibleLayer.color,
+                        );
 
                         return (
                           <div
                             key={layer.id}
+                            ref={(node) => {
+                              if (node) {
+                                textLayerElementsRef.current.set(layer.id, node);
+                              } else {
+                                textLayerElementsRef.current.delete(layer.id);
+                              }
+                            }}
                             role="button"
                             tabIndex={0}
                             onPointerDown={(event) =>
@@ -3011,7 +3025,13 @@ export const CanvasStage = React.forwardRef<
                               textAlign: visibleLayer.textAlign,
                               whiteSpace: "pre-wrap",
                               overflowWrap: "break-word",
-                              textShadow: "none",
+                              boxSizing: "content-box",
+                              backgroundColor:
+                                visibleLayer.backgroundColor ?? undefined,
+                              mixBlendMode: visibleLayer.blendMode,
+                              textShadow: textShadow
+                                ? `${textShadow.offsetX}px ${textShadow.offsetY}px ${textShadow.blur}px ${textShadow.color}`
+                                : "none",
                             }}
                           >
                             {visibleLayer.text}
