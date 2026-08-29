@@ -41,6 +41,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { interpolateCropPoint } from "@/lib/social-export";
 import { cn, formatSignedValue, round, uid } from "@/lib/utils";
 
 const LOOK_CATEGORY_LABELS: Record<LookDefinition["category"], string> = {
@@ -589,22 +590,56 @@ function AdjustmentsInspector({ compact = false }: { compact?: boolean }) {
   );
 }
 
+function getPerspectiveMetrics(
+  perspective: ProjectState["crop"]["perspective"],
+) {
+  const width =
+    (Math.hypot(
+      perspective.tr.x - perspective.tl.x,
+      perspective.tr.y - perspective.tl.y,
+    ) +
+      Math.hypot(
+        perspective.br.x - perspective.bl.x,
+        perspective.br.y - perspective.bl.y,
+      )) /
+    2;
+  const height =
+    (Math.hypot(
+      perspective.bl.x - perspective.tl.x,
+      perspective.bl.y - perspective.tl.y,
+    ) +
+      Math.hypot(
+        perspective.br.x - perspective.tr.x,
+        perspective.br.y - perspective.tr.y,
+      )) /
+    2;
+
+  return {
+    width: Math.max(0.01, width),
+    height: Math.max(0.01, height),
+    fontScale: Math.max(0.0001, Math.min(width / 100, height / 100)),
+  };
+}
+
 function createLayerFromPreset(
   preset: (typeof TEXT_PRESETS)[number],
   perspective: ProjectState["crop"]["perspective"],
 ): TextLayer {
-  const cropW = perspective.tr.x - perspective.tl.x;
-  const cropH = perspective.bl.y - perspective.tl.y;
-  const fontScale = Math.min(cropW / 100, cropH / 100);
+  const metrics = getPerspectiveMetrics(perspective);
+  const position = interpolateCropPoint(
+    perspective,
+    preset.xPct / 100,
+    preset.yPct / 100,
+  );
 
   return {
     id: uid("text"),
     presetId: preset.id,
     text: preset.text,
-    xPct: perspective.tl.x + (preset.xPct / 100) * cropW,
-    yPct: perspective.tl.y + (preset.yPct / 100) * cropH,
-    widthPct: (preset.widthPct / 100) * cropW,
-    fontSizePct: preset.fontSizePct * fontScale,
+    xPct: position.x,
+    yPct: position.y,
+    widthPct: (preset.widthPct / 100) * metrics.width,
+    fontSizePct: preset.fontSizePct * metrics.fontScale,
     fontFamily: preset.fontFamily,
     color: preset.color,
     opacity: preset.opacity,
@@ -622,18 +657,17 @@ function createLayerFromPreset(
 function createCustomTextLayer(
   perspective: ProjectState["crop"]["perspective"],
 ): TextLayer {
-  const cropW = perspective.tr.x - perspective.tl.x;
-  const cropH = perspective.bl.y - perspective.tl.y;
-  const fontScale = Math.min(cropW / 100, cropH / 100);
+  const metrics = getPerspectiveMetrics(perspective);
+  const center = interpolateCropPoint(perspective, 0.5, 0.5);
 
   return {
     id: uid("text"),
     presetId: "custom",
     text: "Your text",
-    xPct: perspective.tl.x + 0.5 * cropW,
-    yPct: perspective.tl.y + 0.5 * cropH,
-    widthPct: 0.48 * cropW,
-    fontSizePct: 12 * fontScale,
+    xPct: center.x,
+    yPct: center.y,
+    widthPct: 0.62 * metrics.width,
+    fontSizePct: 6.4 * metrics.fontScale,
     fontFamily: "sans",
     color: "#fafafa",
     opacity: 1,
@@ -655,7 +689,7 @@ function TextInspector({
 }: {
   compact?: boolean;
   onRequestEditSelectedText?: () => void;
-  onTextLayerAdded?: () => void;
+  onTextLayerAdded?: (layerId: string) => void;
 }) {
   const {
     project,
@@ -696,14 +730,14 @@ function TextInspector({
       }
     }
 
-    onTextLayerAdded?.();
+    onTextLayerAdded?.(layer.id);
   };
 
   const handleAddCustomText = () => {
     const layer = createCustomTextLayer(project.crop.perspective);
     addTextLayer(layer);
     setSelectedTextId(layer.id);
-    onTextLayerAdded?.();
+    onTextLayerAdded?.(layer.id);
   };
 
   return (
@@ -1222,7 +1256,7 @@ export function InspectorPanel({
   className?: string;
   compact?: boolean;
   onRequestEditSelectedText?: () => void;
-  onTextLayerAdded?: () => void;
+  onTextLayerAdded?: (layerId: string) => void;
 }) {
   const { activeTab } = useEditor();
 

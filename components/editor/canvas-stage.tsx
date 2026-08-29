@@ -110,6 +110,7 @@ export interface CanvasStageHandle {
   getElement: () => HTMLDivElement | null;
   deselectText: () => void;
   editSelectedText: () => void;
+  centerTextInViewport: (layerId: string) => void;
   getStageSize: () => { width: number; height: number };
 }
 
@@ -1146,12 +1147,49 @@ export const CanvasStage = React.forwardRef<
           setEditingTextId(selectedTextId);
         }
       },
+      centerTextInViewport: (layerId) => {
+        const layer = latestTextLayersRef.current.find(
+          (candidate) => candidate.id === layerId,
+        );
+        const currentViewport = latestViewportRef.current;
+        const currentStageSize = latestStageSizeRef.current;
+
+        if (!layer || !currentStageSize.width || !currentStageSize.height) {
+          return;
+        }
+
+        const workspaceLayer = {
+          ...layer,
+          xPct: clamp(
+            50 -
+              (currentViewport.offsetX /
+                (currentStageSize.width * currentViewport.zoom)) *
+                100,
+            5,
+            95,
+          ),
+          yPct: clamp(
+            50 -
+              (currentViewport.offsetY /
+                (currentStageSize.height * currentViewport.zoom)) *
+                100,
+            5,
+            95,
+          ),
+        };
+        const sourceLayer = latestMapLayerFromWorkspaceRef.current(workspaceLayer);
+
+        updateTextLayer(layerId, {
+          xPct: sourceLayer.xPct,
+          yPct: sourceLayer.yPct,
+        });
+      },
       getStageSize: () => ({
         width: latestStageSizeRef.current.width,
         height: latestStageSizeRef.current.height,
       }),
     }),
-    [exitCanvasTextEditing, selectedTextId],
+    [exitCanvasTextEditing, selectedTextId, updateTextLayer],
   );
 
   React.useEffect(() => {

@@ -17,6 +17,7 @@ import {
   packGamutMappedRgb,
   mapToneValue,
   RENDERED_BORDER_PRESET_IDS,
+  resolveNoiseReductionParameters,
   resolveEffectiveAdjustments,
   toneMapFilmic,
 } from "@/lib/exportImage";
@@ -204,5 +205,20 @@ describe("filter color safety", () => {
         ).toBe(sample);
       }
     }
+  });
+
+  test("noise reduction grows progressively without becoming an unrestricted blur", () => {
+    const low = resolveNoiseReductionParameters(20, 1600);
+    const medium = resolveNoiseReductionParameters(50, 1600);
+    const high = resolveNoiseReductionParameters(100, 1600);
+
+    expect(low.strength).toBeLessThan(medium.strength);
+    expect(medium.strength).toBeLessThan(high.strength);
+    expect(low.radius).toBeLessThan(medium.radius);
+    expect(medium.radius).toBeLessThan(high.radius);
+    expect(low.lumaMix).toBeLessThan(medium.lumaMix);
+    expect(medium.lumaMix).toBeLessThan(high.lumaMix);
+    expect(high.lumaMix).toBeLessThan(0.9);
+    expect(high.chromaMix).toBeLessThan(1);
   });
 });

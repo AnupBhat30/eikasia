@@ -777,11 +777,18 @@ function EikasiaEditorShell() {
     };
   }, [mobileToolsOpen]);
 
-  const handleMobileTextLayerAdded = React.useCallback(() => {
+  const centerAddedText = React.useCallback((layerId: string) => {
+    window.requestAnimationFrame(() => {
+      stageRef.current?.centerTextInViewport(layerId);
+    });
+  }, []);
+
+  const handleMobileTextLayerAdded = React.useCallback((layerId: string) => {
     setMobileToolsOpen(false);
     setMobileToolsExpanded(false);
+    centerAddedText(layerId);
     setNotice("Text added — drag it on the photo. Reopen Text for styling.");
-  }, []);
+  }, [centerAddedText]);
 
   React.useEffect(() => {
     if (!notice) {
@@ -1320,7 +1327,7 @@ function EikasiaEditorShell() {
                 <span className="size-1.5 rounded-full bg-[var(--accent)] shadow-[0_0_12px_rgba(197,160,89,0.7)]" />
               </div>
               <div className="min-h-0 flex-1">
-                <InspectorPanel />
+                <InspectorPanel onTextLayerAdded={centerAddedText} />
               </div>
             </div>
           </aside>

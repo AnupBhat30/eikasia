@@ -1236,7 +1236,7 @@ function applyDetailAdjustments(
   }
 
   if (adj.noiseReduction > 0) {
-    mixBlurredCanvas(ctx, w, h, clamp(adj.noiseReduction / 180, 0, 0.45));
+    applyEdgePreservingNoiseReduction(ctx, w, h, adj.noiseReduction);
   }
 
   // Keep the perceived radius stable between low-resolution interaction,
@@ -1256,33 +1256,102 @@ function applyDetailAdjustments(
   }
 }
 
-function mixBlurredCanvas(
+export function resolveNoiseReductionParameters(
+  amount: number,
+  maxDimension: number,
+) {
+  const strength = Math.pow(clamp(amount / 100, 0, 1), 0.78);
+  const radiusScale = clamp(maxDimension / 1000, 0.45, 5);
+
+  return {
+    strength,
+    radius: radiusScale * (0.65 + strength * 1.85),
+    lumaMix: strength * (0.42 + strength * 0.44),
+    chromaMix: strength * (0.62 + strength * 0.34),
+    edgeThreshold: 6 + strength * 18,
+  };
+}
+
+function applyEdgePreservingNoiseReduction(
   ctx: RasterContext,
   w: number,
   h: number,
   amount: number,
 ) {
-  const sourceCanvas = createWorkingCanvas(w, h);
-  const sourceContext = getWorkingContext(sourceCanvas);
-  sourceContext.drawImage(ctx.canvas as CanvasImageSource, 0, 0, w, h);
+  const settings = resolveNoiseReductionParameters(amount, Math.max(w, h));
+  const padding = Math.max(2, Math.ceil(settings.radius * 3));
+  const paddedWidth = w + padding * 2;
+  const paddedHeight = h + padding * 2;
+  const source = ctx.canvas as CanvasImageSource;
+  const paddedCanvas = createWorkingCanvas(paddedWidth, paddedHeight);
+  const paddedContext = getWorkingContext(paddedCanvas);
 
-  const blurCanvas = createWorkingCanvas(w, h);
+  // Extend the outermost pixels before blurring. Transparent pixels outside a
+  // canvas otherwise darken the image perimeter at stronger denoise settings.
+  paddedContext.drawImage(source, 0, 0, w, h, padding, padding, w, h);
+  paddedContext.drawImage(source, 0, 0, w, 1, padding, 0, w, padding);
+  paddedContext.drawImage(source, 0, h - 1, w, 1, padding, padding + h, w, padding);
+  paddedContext.drawImage(source, 0, 0, 1, h, 0, padding, padding, h);
+  paddedContext.drawImage(source, w - 1, 0, 1, h, padding + w, padding, padding, h);
+  paddedContext.drawImage(source, 0, 0, 1, 1, 0, 0, padding, padding);
+  paddedContext.drawImage(source, w - 1, 0, 1, 1, padding + w, 0, padding, padding);
+  paddedContext.drawImage(source, 0, h - 1, 1, 1, 0, padding + h, padding, padding);
+  paddedContext.drawImage(
+    source,
+    w - 1,
+    h - 1,
+    1,
+    1,
+    padding + w,
+    padding + h,
+    padding,
+    padding,
+  );
+
+  const blurCanvas = createWorkingCanvas(paddedWidth, paddedHeight);
   const blurContext = getWorkingContext(blurCanvas);
-  blurContext.filter = `blur(${Math.max(w, h) / 720}px)`;
-  blurContext.drawImage(sourceCanvas, 0, 0, w, h);
+  blurContext.filter = `blur(${settings.radius}px)`;
+  blurContext.drawImage(paddedCanvas, 0, 0, paddedWidth, paddedHeight);
 
   const original = ctx.getImageData(0, 0, w, h);
-  const blurred = blurContext.getImageData(0, 0, w, h);
+  const blurred = blurContext.getImageData(padding, padding, w, h);
+  const originalData = original.data;
+  const blurredData = blurred.data;
+  const edgeThresholdSquared = settings.edgeThreshold ** 2;
 
-  for (let i = 0; i < original.data.length; i += 4) {
-    original.data[i] = clampByte(
-      original.data[i] + (blurred.data[i] - original.data[i]) * amount,
+  for (let i = 0; i < originalData.length; i += 4) {
+    const originalR = originalData[i];
+    const originalG = originalData[i + 1];
+    const originalB = originalData[i + 2];
+    const blurredR = blurredData[i];
+    const blurredG = blurredData[i + 1];
+    const blurredB = blurredData[i + 2];
+    const originalLuma =
+      0.213 * originalR + 0.715 * originalG + 0.072 * originalB;
+    const blurredLuma =
+      0.213 * blurredR + 0.715 * blurredG + 0.072 * blurredB;
+    const lumaDifference = originalLuma - blurredLuma;
+    const edgeWeight =
+      edgeThresholdSquared /
+      (edgeThresholdSquared + lumaDifference * lumaDifference * 2.5);
+    const lumaMix = settings.lumaMix * edgeWeight;
+    const chromaMix = settings.chromaMix * (0.15 + edgeWeight * 0.85);
+    const outputLuma = originalLuma - lumaDifference * lumaMix;
+
+    originalData[i] = clampByte(
+      outputLuma +
+        (originalR - originalLuma) +
+        ((blurredR - blurredLuma) - (originalR - originalLuma)) * chromaMix,
     );
-    original.data[i + 1] = clampByte(
-      original.data[i + 1] + (blurred.data[i + 1] - original.data[i + 1]) * amount,
+    originalData[i + 1] = clampByte(
+      outputLuma +
+        (originalG - originalLuma) +
+        ((blurredG - blurredLuma) - (originalG - originalLuma)) * chromaMix,
     );
-    original.data[i + 2] = clampByte(
-      original.data[i + 2] + (blurred.data[i + 2] - original.data[i + 2]) * amount,
+    originalData[i + 2] = clampByte(
+      outputLuma +
+        (originalB - originalLuma) +
+        ((blurredB - blurredLuma) - (originalB - originalLuma)) * chromaMix,
     );
   }
 
