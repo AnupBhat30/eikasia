@@ -37,7 +37,10 @@ const Slider = React.forwardRef<
   const lastSentValueRef = React.useRef<number[] | undefined>(value);
   const updateTimerRef = React.useRef(0);
   const onValueChangeRef = React.useRef(onValueChange);
-  onValueChangeRef.current = onValueChange;
+
+  React.useEffect(() => {
+    onValueChangeRef.current = onValueChange;
+  }, [onValueChange]);
 
   React.useEffect(() => {
     if (!interactingRef.current) {
@@ -125,11 +128,11 @@ const Slider = React.forwardRef<
         data-slot="slider-track"
         className="relative h-1 w-full grow overflow-hidden rounded-full bg-[#202020]"
       >
-        <SliderPrimitive.Range className="absolute h-full bg-[var(--accent)]" />
+        <SliderPrimitive.Range className="absolute h-full bg-(--accent)" />
       </SliderPrimitive.Track>
       <SliderPrimitive.Thumb
         data-slot="slider-thumb"
-        className="block size-5 rounded-full border border-black bg-[var(--accent)] shadow-[0_0_0_1px_var(--accent-shadow)] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] disabled:pointer-events-none disabled:opacity-50"
+        className="block size-5 rounded-full border border-black bg-(--accent) shadow-[0_0_0_1px_var(--accent-shadow)] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent) disabled:pointer-events-none disabled:opacity-50"
       />
     </SliderPrimitive.Root>
   );

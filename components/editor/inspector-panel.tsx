@@ -73,18 +73,18 @@ function PanelSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="editor-panel-section space-y-4 border-b border-[var(--border)] pb-6 last:border-b-0 last:pb-0">
+    <section className="editor-panel-section space-y-4 border-b border-(--border) pb-6 last:border-b-0 last:pb-0">
       <header className="editor-panel-section-header space-y-2">
         <div className="flex items-center gap-3">
-          <span className="flex size-8 items-center justify-center border border-[var(--border)] bg-[rgba(255,255,255,0.02)]">
-            <Icon className="size-4 text-[var(--accent)]" />
+          <span className="flex size-8 items-center justify-center border border-(--border) bg-[rgba(255,255,255,0.02)]">
+            <Icon className="size-4 text-(--accent)" />
           </span>
-          <h3 className="text-[10px] font-medium uppercase tracking-[0.24em] leading-4 text-[var(--text-primary)] sm:text-[11px] sm:tracking-[0.34em]">
+          <h3 className="text-[10px] font-medium uppercase tracking-[0.24em] leading-4 text-foreground sm:text-[11px] sm:tracking-[0.34em]">
             {title}
           </h3>
         </div>
         {detail ? (
-          <p className="editor-panel-section-detail max-w-[32ch] text-sm leading-6 text-[var(--text-muted)]">
+          <p className="editor-panel-section-detail max-w-[32ch] text-sm leading-6 text-(--text-muted)">
             {detail}
           </p>
         ) : null}
@@ -123,12 +123,12 @@ function ResponsivePanelSection({
     <AccordionItem value={id}>
       <AccordionTrigger className="min-h-12 py-3">
         <span className="flex min-w-0 items-center gap-3">
-          <span className="flex size-8 shrink-0 items-center justify-center border border-[var(--border)] bg-[rgba(255,255,255,0.02)]">
-            <Icon className="size-4 text-[var(--accent)]" />
+          <span className="flex size-8 shrink-0 items-center justify-center border border-(--border) bg-[rgba(255,255,255,0.02)]">
+            <Icon className="size-4 text-(--accent)" />
           </span>
           <span className="truncate">{title}</span>
           {active ? (
-            <span className="size-1.5 shrink-0 rounded-full bg-[var(--accent)] shadow-[0_0_9px_rgba(197,160,89,0.7)]">
+            <span className="size-1.5 shrink-0 rounded-full bg-(--accent) shadow-[0_0_9px_rgba(197,160,89,0.7)]">
               <span className="sr-only">Active</span>
             </span>
           ) : null}
@@ -158,7 +158,7 @@ const ToneCard = React.memo(function ToneCard({
       disabled={disabled}
       onClick={() => onSelect(look.id)}
       className={cn(
-        "group flex w-[88px] shrink-0 flex-col gap-2 text-left transition-transform duration-150 disabled:opacity-40 sm:w-[94px]",
+        "group flex w-22 shrink-0 flex-col gap-2 text-left transition-transform duration-150 disabled:opacity-40 sm:w-23.5",
         active ? "-translate-y-0.5" : "hover:-translate-y-0.5",
       )}
     >
@@ -166,8 +166,8 @@ const ToneCard = React.memo(function ToneCard({
         className={cn(
           "relative block h-18 w-18 overflow-hidden border bg-black shadow-[0_20px_40px_rgba(0,0,0,0.25)] sm:h-20 sm:w-20",
           active
-            ? "border-[var(--accent)]"
-            : "border-[var(--border)] group-hover:border-[rgba(245,158,11,0.55)]",
+            ? "border-(--accent)"
+            : "border-(--border) group-hover:border-[rgba(245,158,11,0.55)]",
         )}
       >
         <span
@@ -190,8 +190,8 @@ const ToneCard = React.memo(function ToneCard({
       </span>
       <span
         className={cn(
-          "font-mono text-[10px] uppercase tracking-[0.14em] leading-4 break-words sm:text-[11px] sm:tracking-[0.18em]",
-          active ? "text-[var(--accent)]" : "text-[var(--text-muted)]",
+          "font-mono text-[10px] uppercase tracking-[0.14em] leading-4 wrap-anywhere sm:text-[11px] sm:tracking-[0.18em]",
+          active ? "text-(--accent)" : "text-(--text-muted)",
         )}
       >
         {look.name}
@@ -225,10 +225,10 @@ function AdjustmentSliderRow({
     <div className="space-y-3 py-2">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-          <span className="truncate text-[10px] uppercase tracking-[0.2em] text-[var(--text-primary)] sm:text-[11px] sm:tracking-[0.26em]">
+          <span className="truncate text-[10px] uppercase tracking-[0.2em] text-foreground sm:text-[11px] sm:tracking-[0.26em]">
             {control.label}
           </span>
-          <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)] sm:text-[11px] sm:tracking-[0.16em]">
+          <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-(--text-muted) sm:text-[11px] sm:tracking-[0.16em]">
             {formatAdjustmentValue(control, value)}
           </span>
         </div>
@@ -238,7 +238,7 @@ function AdjustmentSliderRow({
           title={`Reset ${control.label}`}
           disabled={disabled}
           onClick={onReset}
-          className="flex size-9 shrink-0 items-center justify-center border border-[var(--border)] text-[var(--text-muted)] transition-colors hover:border-[rgba(245,158,11,0.45)] hover:text-[var(--accent)] disabled:opacity-30"
+          className="flex size-9 shrink-0 items-center justify-center border border-(--border) text-(--text-muted) transition-colors hover:border-[rgba(245,158,11,0.45)] hover:text-(--accent) disabled:opacity-30"
         >
           <RotateCcw className="size-3.5" />
         </button>
@@ -290,8 +290,8 @@ function FiltersInspector({ compact = false }: { compact?: boolean }) {
                   className={cn(
                     "min-h-10 rounded-full border px-4 text-[10px] uppercase tracking-[0.16em] transition-colors",
                     activeGroup.id === group.id
-                      ? "border-[var(--accent)] bg-[var(--accent)] text-black"
-                      : "border-[var(--border)] bg-[rgba(255,255,255,0.03)] text-[var(--text-muted)]",
+                      ? "border-(--accent) bg-(--accent) text-black"
+                      : "border-(--border) bg-[rgba(255,255,255,0.03)] text-(--text-muted)",
                   )}
                 >
                   {group.label}
@@ -320,10 +320,10 @@ function FiltersInspector({ compact = false }: { compact?: boolean }) {
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="truncate text-xs text-[var(--text-primary)]">
+                <p className="truncate text-xs text-foreground">
                   {selectedLook?.name ?? "Original"}
                 </p>
-                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-(--text-muted)">
                   {project.filterIntensity}% intensity
                 </p>
               </div>
@@ -475,10 +475,10 @@ function FiltersInspector({ compact = false }: { compact?: boolean }) {
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-[11px] uppercase tracking-[0.26em] text-[var(--text-primary)]">
+              <p className="text-[11px] uppercase tracking-[0.26em] text-foreground">
                 Intensity
               </p>
-              <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-(--text-muted)">
                 {project.filterIntensity}%
               </p>
             </div>
@@ -501,7 +501,7 @@ function FiltersInspector({ compact = false }: { compact?: boolean }) {
 
           {project.activeLookId === "acros" ? (
             <div className="space-y-2">
-              <p className="text-[11px] uppercase tracking-[0.26em] text-[var(--text-primary)]">
+              <p className="text-[11px] uppercase tracking-[0.26em] text-foreground">
                 Acros Channel
               </p>
               <Select
@@ -525,16 +525,16 @@ function FiltersInspector({ compact = false }: { compact?: boolean }) {
           ) : null}
 
           {selectedLook ? (
-            <div className="border border-[var(--border)] bg-[rgba(255,255,255,0.02)] p-4">
+            <div className="border border-(--border) bg-[rgba(255,255,255,0.02)] p-4">
               <div className="flex items-center justify-between gap-4">
-                <span className="font-mono text-[11px] uppercase tracking-[0.22em] text-[var(--accent)]">
+                <span className="font-mono text-[11px] uppercase tracking-[0.22em] text-(--accent)">
                   {LOOK_CATEGORY_LABELS[selectedLook.category]}
                 </span>
-                <span className="text-[11px] uppercase tracking-[0.22em] text-[var(--text-muted)]">
+                <span className="text-[11px] uppercase tracking-[0.22em] text-(--text-muted)">
                   {selectedLook.name}
                 </span>
               </div>
-              <p className="mt-3 text-sm leading-6 text-[var(--text-muted)]">
+              <p className="mt-3 text-sm leading-6 text-(--text-muted)">
                 {selectedLook.summary}
               </p>
             </div>
@@ -764,14 +764,14 @@ function TextInspector({
                 disabled={!hasImage}
                 onClick={() => handleAddPreset(preset.id)}
                 className={cn(
-                  "group border border-[var(--border)] bg-[rgba(255,255,255,0.02)] p-3 text-left transition-colors hover:border-[rgba(245,158,11,0.45)] hover:bg-[rgba(245,158,11,0.04)] disabled:opacity-40",
-                  compact ? "min-h-[78px]" : "min-h-[92px]",
+                  "group border border-(--border) bg-[rgba(255,255,255,0.02)] p-3 text-left transition-colors hover:border-[rgba(245,158,11,0.45)] hover:bg-[rgba(245,158,11,0.04)] disabled:opacity-40",
+                  compact ? "min-h-19.5" : "min-h-23",
                 )}
               >
-                <span className="block min-w-0 break-words text-[9px] uppercase leading-4 tracking-[0.1em] [overflow-wrap:anywhere] text-[var(--text-primary)] sm:text-[10px] sm:tracking-[0.16em]">
+                <span className="block min-w-0 wrap-anywhere text-[9px] uppercase leading-4 tracking-widest text-foreground sm:text-[10px] sm:tracking-[0.16em]">
                   {preset.name}
                 </span>
-                <span className="mt-3 block text-xs leading-5 text-[var(--text-muted)]">
+                <span className="mt-3 block text-xs leading-5 text-(--text-muted)">
                   {preset.text}
                 </span>
               </button>
@@ -793,8 +793,8 @@ function TextInspector({
                 className={cn(
                   "flex items-center justify-between gap-3 border p-3",
                   selectedTextId === layer.id
-                    ? "border-[var(--accent)] bg-[rgba(245,158,11,0.06)]"
-                    : "border-[var(--border)] bg-[rgba(255,255,255,0.02)]",
+                    ? "border-(--accent) bg-[rgba(245,158,11,0.06)]"
+                    : "border-(--border) bg-[rgba(255,255,255,0.02)]",
                 )}
               >
                 <button
@@ -802,10 +802,10 @@ function TextInspector({
                   className="min-w-0 flex-1 text-left"
                   onClick={() => setSelectedTextId(layer.id)}
                 >
-                  <p className="truncate text-[10px] uppercase tracking-[0.16em] text-[var(--text-primary)] sm:text-[11px] sm:tracking-[0.24em]">
+                  <p className="truncate text-[10px] uppercase tracking-[0.16em] text-foreground sm:text-[11px] sm:tracking-[0.24em]">
                     {layer.presetId.replaceAll("-", " ")}
                   </p>
-                  <p className="mt-2 truncate font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                  <p className="mt-2 truncate font-mono text-[11px] uppercase tracking-[0.16em] text-(--text-muted)">
                     {layer.text}
                   </p>
                 </button>
@@ -832,18 +832,18 @@ function TextInspector({
               </div>
             ))
           ) : (
-            <div className="border border-dashed border-[var(--border)] p-4 text-sm leading-6 text-[var(--text-muted)]">
+            <div className="border border-dashed border-(--border) p-4 text-sm leading-6 text-(--text-muted)">
               No text objects yet. Click any preset above to place it on the
               image canvas.
             </div>
           )}
 
           {selectedLayer ? (
-            <div className="border border-[var(--border)] bg-[rgba(255,255,255,0.02)] p-4">
-              <p className="text-[11px] uppercase tracking-[0.26em] text-[var(--accent)]">
+            <div className="border border-(--border) bg-[rgba(255,255,255,0.02)] p-4">
+              <p className="text-[11px] uppercase tracking-[0.26em] text-(--accent)">
                 Selected
               </p>
-              <p className="mt-3 text-sm leading-6 text-[var(--text-muted)]">
+              <p className="mt-3 text-sm leading-6 text-(--text-muted)">
                 Font {selectedLayer.fontFamily}, opacity{" "}
                 {Math.round(selectedLayer.opacity * 100)}%, align{" "}
                 {selectedLayer.textAlign}.
@@ -873,10 +873,10 @@ function OverlayPresetButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "min-w-0 overflow-hidden break-words border px-2 py-3 text-center text-[9px] uppercase leading-4 tracking-[0.1em] [overflow-wrap:anywhere] transition-colors disabled:opacity-40 sm:px-3 sm:text-[10px] sm:tracking-[0.16em]",
+        "min-w-0 overflow-hidden wrap-anywhere border px-2 py-3 text-center text-[9px] uppercase leading-4 tracking-widest transition-colors disabled:opacity-40 sm:px-3 sm:text-[10px] sm:tracking-[0.16em]",
         active
-          ? "border-[var(--accent)] bg-[rgba(245,158,11,0.08)] text-[var(--accent)]"
-          : "border-[var(--border)] bg-[rgba(255,255,255,0.02)] text-[var(--text-muted)] hover:border-[rgba(245,158,11,0.45)] hover:text-[var(--text-primary)]",
+          ? "border-(--accent) bg-[rgba(245,158,11,0.08)] text-(--accent)"
+          : "border-(--border) bg-[rgba(255,255,255,0.02)] text-(--text-muted) hover:border-[rgba(245,158,11,0.45)] hover:text-foreground",
       )}
     >
       {label}
@@ -983,7 +983,7 @@ function OverlaysInspector({ compact = false }: { compact?: boolean }) {
         detail="Blue cinema streak with adjustable intensity and vertical placement."
       >
         <div className="flex items-center justify-between gap-3">
-          <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--text-primary)]">
+          <p className="text-[11px] uppercase tracking-[0.24em] text-foreground">
             Lens Streak
           </p>
           <Button
@@ -1003,10 +1003,10 @@ function OverlaysInspector({ compact = false }: { compact?: boolean }) {
         <div className="space-y-4">
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-[11px] uppercase tracking-[0.22em] text-[var(--text-primary)]">
+              <span className="text-[11px] uppercase tracking-[0.22em] text-foreground">
                 Intensity
               </span>
-              <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-(--text-muted)">
                 {activeOverlay.flare?.intensity ?? 0}%
               </span>
             </div>
@@ -1028,10 +1028,10 @@ function OverlaysInspector({ compact = false }: { compact?: boolean }) {
 
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-[11px] uppercase tracking-[0.22em] text-[var(--text-primary)]">
+              <span className="text-[11px] uppercase tracking-[0.22em] text-foreground">
                 Position
               </span>
-              <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-(--text-muted)">
                 {activeOverlay.flare?.position ?? 48}%
               </span>
             </div>
@@ -1090,12 +1090,12 @@ function OverlaysInspector({ compact = false }: { compact?: boolean }) {
         title="Dust & Scratches"
         detail="Add restrained analog imperfections on top of the frame."
       >
-        <div className="flex flex-col gap-4 border border-[var(--border)] bg-[rgba(255,255,255,0.02)] p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-4 border border-(--border) bg-[rgba(255,255,255,0.02)] p-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.26em] text-[var(--text-primary)]">
+            <p className="text-[11px] uppercase tracking-[0.26em] text-foreground">
               Imperfections
             </p>
-            <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">
+            <p className="mt-2 text-sm leading-6 text-(--text-muted)">
               Thin scratches, dust specks, and projector wear.
             </p>
           </div>
@@ -1163,10 +1163,10 @@ function CropInspector({ compact = false }: { compact?: boolean }) {
         <div className="space-y-5">
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-[11px] uppercase tracking-[0.22em] text-[var(--text-primary)]">
+              <span className="text-[11px] uppercase tracking-[0.22em] text-foreground">
                 Rotation
               </span>
-              <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-(--text-muted)">
                 {formatSignedValue(round(project.crop.rotation, 1))}°
               </span>
             </div>
@@ -1215,11 +1215,11 @@ function CropInspector({ compact = false }: { compact?: boolean }) {
             </Button>
           </div>
 
-          <div className="border border-[var(--border)] bg-[rgba(255,255,255,0.02)] p-4">
-            <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--accent)]">
+          <div className="border border-(--border) bg-[rgba(255,255,255,0.02)] p-4">
+            <p className="text-[11px] uppercase tracking-[0.24em] text-(--accent)">
               Perspective Warp
             </p>
-            <p className="mt-3 text-sm leading-6 text-[var(--text-muted)]">
+            <p className="mt-3 text-sm leading-6 text-(--text-muted)">
               Grab any amber corner handle directly on the canvas to skew the crop
               into a perspective-correct or off-axis frame.
             </p>
@@ -1235,7 +1235,7 @@ function CropInspector({ compact = false }: { compact?: boolean }) {
               >
                 Apply Crop
               </Button>
-              <p className="text-center text-[10px] leading-4 tracking-[0.08em] text-[var(--text-muted)]">
+              <p className="text-center text-[10px] leading-4 tracking-[0.08em] text-(--text-muted)">
                 The workspace will resize to this frame. Text outside it stays
                 clipped and will not be exported.
               </p>

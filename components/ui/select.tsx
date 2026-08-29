@@ -34,14 +34,14 @@ function SelectTrigger({
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
       className={cn(
-        "flex h-11 w-full min-w-0 items-center justify-between gap-2 overflow-hidden border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-left text-[10px] uppercase tracking-[0.14em] text-[var(--text-primary)] transition-colors duration-150 focus:outline-none focus:ring-1 focus:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-45 rounded-none sm:text-[11px] sm:tracking-[0.18em]",
+        "flex h-11 w-full min-w-0 items-center justify-between gap-2 overflow-hidden border border-(--border) bg-(--surface-2) px-3 py-2 text-left text-[10px] uppercase tracking-[0.14em] text-foreground transition-colors duration-150 focus:outline-none focus:ring-1 focus:ring-(--accent) disabled:cursor-not-allowed disabled:opacity-45 rounded-none sm:text-[11px] sm:tracking-[0.18em]",
         className,
       )}
       {...props}
     >
       {children}
       <SelectPrimitive.Icon asChild>
-        <ChevronDown className="size-4 shrink-0 text-[var(--text-muted)]" />
+        <ChevronDown className="size-4 shrink-0 text-(--text-muted)" />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   );
@@ -59,7 +59,7 @@ function SelectContent({
         data-slot="select-content"
         position={position}
         className={cn(
-          "relative z-50 min-w-[8rem] overflow-hidden border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] shadow-[0_24px_70px_rgba(0,0,0,0.55)] rounded-none",
+          "relative z-50 min-w-[8rem] overflow-hidden border border-(--border) bg-(--surface) text-foreground shadow-[0_24px_70px_rgba(0,0,0,0.55)] rounded-none",
           className,
         )}
         {...props}
@@ -88,7 +88,7 @@ function SelectItem({
     >
       <span className="absolute right-3 flex size-4 items-center justify-center">
         <SelectPrimitive.ItemIndicator>
-          <Check className="size-3.5 text-[var(--accent)]" />
+          <Check className="size-3.5 text-(--accent)" />
         </SelectPrimitive.ItemIndicator>
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>

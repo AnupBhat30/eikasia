@@ -2864,25 +2864,25 @@ export const CanvasStage = React.forwardRef<
           className={cn(
             "relative flex w-full max-w-5xl items-center justify-center border border-dashed px-5 py-14 sm:px-10 sm:py-24 transition-colors",
             dragActive
-              ? "border-[var(--accent)] bg-[rgba(245,158,11,0.04)]"
+              ? "border-(--accent) bg-[rgba(245,158,11,0.04)]"
               : "border-[rgba(255,255,255,0.14)] bg-[rgba(255,255,255,0.02)] hover:border-[rgba(245,158,11,0.35)]",
           )}
         >
           <div className="space-y-8 text-center">
             <FilmFrameIcon />
             <div className="space-y-3">
-              <p className="text-sm uppercase tracking-[0.34em] text-[var(--text-primary)] sm:text-lg sm:tracking-[0.72em]">
+              <p className="text-sm uppercase tracking-[0.34em] text-foreground sm:text-lg sm:tracking-[0.72em]">
                 Drop Your Frame
               </p>
-              <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-[var(--text-muted)]">
+              <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-(--text-muted)">
                 PNG, JPG, WEBP, AVIF, HEIC up to 50MB
               </p>
-              <p className="mx-auto max-w-sm text-xs leading-5 text-[var(--text-muted)]">
+              <p className="mx-auto max-w-sm text-xs leading-5 text-(--text-muted)">
                 Your photo stays in this browser while you apply film looks,
                 color adjustments, grain, crops, overlays, and text.
               </p>
             </div>
-            <div className="mx-auto flex h-11 items-center justify-center border border-[var(--border)] bg-[var(--surface)] px-5 text-[11px] uppercase tracking-[0.28em] text-[var(--text-primary)]">
+            <div className="mx-auto flex h-11 items-center justify-center border border-(--border) bg-(--surface) px-5 text-[11px] uppercase tracking-[0.28em] text-foreground">
               Click To Upload
             </div>
           </div>
@@ -2899,14 +2899,14 @@ export const CanvasStage = React.forwardRef<
           }
         >
           <div className="absolute left-6 top-6 z-20 hidden select-none items-center gap-3 sm:flex">
-            <div className="max-w-[56vw] border border-[var(--border)] bg-[rgba(10,10,10,0.82)] px-3 py-2 sm:max-w-[320px]">
-              <p className="truncate font-mono text-[11px] uppercase tracking-[0.2em] text-[var(--accent)] sm:tracking-[0.24em]">
+            <div className="max-w-[56vw] border border-(--border) bg-[rgba(10,10,10,0.82)] px-3 py-2 sm:max-w-[320px]">
+              <p className="truncate font-mono text-[11px] uppercase tracking-[0.2em] text-(--accent) sm:tracking-[0.24em]">
                 {project.imageName ?? "Untitled Frame"}
               </p>
             </div>
             {activeLook ? (
-              <div className="hidden max-w-[220px] border border-[var(--border)] bg-[rgba(10,10,10,0.82)] px-3 py-2 sm:block">
-                <p className="truncate font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)] sm:tracking-[0.22em]">
+              <div className="hidden max-w-55 border border-(--border) bg-[rgba(10,10,10,0.82)] px-3 py-2 sm:block">
+                <p className="truncate font-mono text-[11px] uppercase tracking-[0.18em] text-(--text-muted) sm:tracking-[0.22em]">
                   {activeLook.name}
                 </p>
               </div>
@@ -2916,7 +2916,7 @@ export const CanvasStage = React.forwardRef<
           <div
             ref={viewportTransformRef}
             className={cn(
-              "relative flex items-center justify-center [will-change:transform]",
+              "relative flex items-center justify-center will-change-transform",
               project.imageSrc && spacePressed && "cursor-grab",
             )}
             onPointerDownCapture={handleViewportPointerDown}
@@ -3002,7 +3002,7 @@ export const CanvasStage = React.forwardRef<
                             className={cn(
                               "absolute -translate-x-1/2 -translate-y-1/2 cursor-move select-none border border-dashed px-1 py-0.5 outline-none touch-none",
                               isSelected
-                                ? "border-[var(--accent)] bg-[rgba(245,158,11,0.08)]"
+                                ? "border-(--accent) bg-[rgba(245,158,11,0.08)]"
                                 : "border-transparent hover:border-[rgba(245,158,11,0.55)]",
                             )}
                             style={{
@@ -3042,7 +3042,7 @@ export const CanvasStage = React.forwardRef<
                                 onPointerDown={(event) =>
                                   startTextLayerResize(event, layer)
                                 }
-                                className="absolute -bottom-5 -right-5 size-10 cursor-nwse-resize rounded-full border border-transparent bg-transparent after:absolute after:left-1/2 after:top-1/2 after:size-4 after:-translate-x-1/2 after:-translate-y-1/2 after:rounded-full after:border after:border-black after:bg-[var(--accent)] after:content-[''] sm:-bottom-2 sm:-right-2 sm:size-4 sm:rounded-none sm:border-black sm:bg-[var(--accent)] sm:after:hidden"
+                                className="absolute -bottom-5 -right-5 size-10 cursor-nwse-resize rounded-full border border-transparent bg-transparent after:absolute after:left-1/2 after:top-1/2 after:size-4 after:-translate-x-1/2 after:-translate-y-1/2 after:rounded-full after:border after:border-black after:bg-(--accent) after:content-[''] sm:-bottom-2 sm:-right-2 sm:size-4 sm:rounded-none sm:border-black sm:bg-(--accent) sm:after:hidden"
                               />
                             ) : null}
                           </div>
@@ -3205,7 +3205,7 @@ export const CanvasStage = React.forwardRef<
                           setDragCorner(corner);
                         }}
                         aria-label={`Resize crop from ${corner} corner`}
-                        className="absolute z-40 size-10 -translate-x-1/2 -translate-y-1/2 rounded-full border border-transparent bg-transparent after:absolute after:left-1/2 after:top-1/2 after:size-5 after:-translate-x-1/2 after:-translate-y-1/2 after:rounded-full after:border after:border-black after:bg-[var(--accent)] after:content-[''] sm:size-4 sm:rounded-none sm:border-black sm:bg-[var(--accent)] sm:after:hidden"
+                        className="absolute z-40 size-10 -translate-x-1/2 -translate-y-1/2 rounded-full border border-transparent bg-transparent after:absolute after:left-1/2 after:top-1/2 after:size-5 after:-translate-x-1/2 after:-translate-y-1/2 after:rounded-full after:border after:border-black after:bg-(--accent) after:content-[''] sm:size-4 sm:rounded-none sm:border-black sm:bg-(--accent) sm:after:hidden"
                         style={{ left: `${point.x}%`, top: `${point.y}%` }}
                       />
                     ))}
@@ -3218,7 +3218,7 @@ export const CanvasStage = React.forwardRef<
 
           {dragActive ? (
             <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-[rgba(0,0,0,0.45)]">
-              <div className="border border-[var(--accent)] bg-[rgba(10,10,10,0.92)] px-5 py-4 text-[11px] uppercase tracking-[0.36em] text-[var(--accent)]">
+              <div className="border border-(--accent) bg-[rgba(10,10,10,0.92)] px-5 py-4 text-[11px] uppercase tracking-[0.36em] text-(--accent)">
                 Drop To Replace Frame
               </div>
             </div>
@@ -3246,10 +3246,10 @@ export const CanvasStage = React.forwardRef<
                   <div className="space-y-5">
                   <div className="flex items-center justify-between gap-4">
                     <div>
-                      <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--accent)]">
+                      <p className="text-[11px] uppercase tracking-[0.28em] text-(--accent)">
                         Text Overlay
                       </p>
-                      <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">
+                      <p className="mt-2 text-sm leading-6 text-(--text-muted)">
                         Edit this Fabric text layer directly on the canvas.
                       </p>
                     </div>
@@ -3264,7 +3264,7 @@ export const CanvasStage = React.forwardRef<
                   </div>
 
                   <div className="space-y-2">
-                    <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--text-primary)]">
+                    <p className="text-[11px] uppercase tracking-[0.24em] text-foreground">
                       Copy
                     </p>
                     <textarea
@@ -3274,13 +3274,13 @@ export const CanvasStage = React.forwardRef<
                           text: event.target.value,
                         })
                       }
-                      className="min-h-[88px] w-full border border-[var(--border)] bg-[rgba(255,255,255,0.02)] px-3 py-3 text-sm leading-6 text-[var(--text-primary)] outline-none transition-colors focus:border-[rgba(245,158,11,0.5)]"
+                      className="min-h-22 w-full border border-(--border) bg-[rgba(255,255,255,0.02)] px-3 py-3 text-sm leading-6 text-foreground outline-none transition-colors focus:border-[rgba(245,158,11,0.5)]"
                     />
                   </div>
 
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="space-y-2">
-                      <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--text-primary)]">
+                      <p className="text-[11px] uppercase tracking-[0.24em] text-foreground">
                         Font Family
                       </p>
                       <Select
@@ -3305,7 +3305,7 @@ export const CanvasStage = React.forwardRef<
                     </div>
 
                     <div className="space-y-2">
-                      <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--text-primary)]">
+                      <p className="text-[11px] uppercase tracking-[0.24em] text-foreground">
                         Weight
                       </p>
                       <Select
@@ -3330,7 +3330,7 @@ export const CanvasStage = React.forwardRef<
                     </div>
 
                     <div className="space-y-2">
-                      <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--text-primary)]">
+                      <p className="text-[11px] uppercase tracking-[0.24em] text-foreground">
                         Blend Mode
                       </p>
                       <Select
@@ -3355,7 +3355,7 @@ export const CanvasStage = React.forwardRef<
                     </div>
 
                     <div className="space-y-2">
-                      <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--text-primary)]">
+                      <p className="text-[11px] uppercase tracking-[0.24em] text-foreground">
                         Style
                       </p>
                       <Button
@@ -3383,10 +3383,10 @@ export const CanvasStage = React.forwardRef<
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-[11px] uppercase tracking-[0.22em] text-[var(--text-primary)]">
+                        <span className="text-[11px] uppercase tracking-[0.22em] text-foreground">
                           Font Size
                         </span>
-                        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-(--text-muted)">
                           {Math.round(
                             fromPercentage(
                               selectedWorkspaceTextLayer?.fontSizePct ??
@@ -3419,10 +3419,10 @@ export const CanvasStage = React.forwardRef<
 
                     <div className="space-y-2">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-[11px] uppercase tracking-[0.22em] text-[var(--text-primary)]">
+                        <span className="text-[11px] uppercase tracking-[0.22em] text-foreground">
                           Box Width
                         </span>
-                        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-(--text-muted)">
                           {Math.round(selectedTextWidth)}px
                         </span>
                       </div>
@@ -3444,10 +3444,10 @@ export const CanvasStage = React.forwardRef<
 
                     <div className="space-y-2">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-[11px] uppercase tracking-[0.22em] text-[var(--text-primary)]">
+                        <span className="text-[11px] uppercase tracking-[0.22em] text-foreground">
                           Tracking
                         </span>
-                        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-(--text-muted)">
                           {round(selectedTextTracking, 1)}px
                         </span>
                       </div>
@@ -3469,10 +3469,10 @@ export const CanvasStage = React.forwardRef<
 
                     <div className="space-y-2">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-[11px] uppercase tracking-[0.22em] text-[var(--text-primary)]">
+                        <span className="text-[11px] uppercase tracking-[0.22em] text-foreground">
                           Line Height
                         </span>
-                        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-(--text-muted)">
                           {round(selectedTextLayer.lineHeight, 2)}
                         </span>
                       </div>
@@ -3491,10 +3491,10 @@ export const CanvasStage = React.forwardRef<
 
                     <div className="space-y-2">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-[11px] uppercase tracking-[0.22em] text-[var(--text-primary)]">
+                        <span className="text-[11px] uppercase tracking-[0.22em] text-foreground">
                           Opacity
                         </span>
-                        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-(--text-muted)">
                           {Math.round(selectedTextLayer.opacity * 100)}%
                         </span>
                       </div>
@@ -3514,7 +3514,7 @@ export const CanvasStage = React.forwardRef<
 
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_88px]">
                     <div className="space-y-2">
-                      <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--text-primary)]">
+                      <p className="text-[11px] uppercase tracking-[0.24em] text-foreground">
                         Shadow
                       </p>
                       <Select
@@ -3539,7 +3539,7 @@ export const CanvasStage = React.forwardRef<
                     </div>
 
                     <label className="space-y-2">
-                      <span className="block text-[11px] uppercase tracking-[0.24em] text-[var(--text-primary)]">
+                      <span className="block text-[11px] uppercase tracking-[0.24em] text-foreground">
                         Color
                       </span>
                       <input
@@ -3550,13 +3550,13 @@ export const CanvasStage = React.forwardRef<
                             color: event.target.value,
                           })
                         }
-                        className="h-11 w-full border border-[var(--border)] bg-transparent p-1"
+                        className="h-11 w-full border border-(--border) bg-transparent p-1"
                       />
                     </label>
                   </div>
                   </div>
                 </div>
-                <div className="shrink-0 border-t border-[var(--border)] bg-[var(--surface)] p-3">
+                <div className="shrink-0 border-t border-(--border) bg-(--surface) p-3">
                   <Button
                     variant="amber"
                     className="h-11 w-full rounded-xl"
@@ -3575,13 +3575,13 @@ export const CanvasStage = React.forwardRef<
       {project.imageSrc ? (
         <>
           <div className="pointer-events-none absolute right-3 z-10 hidden items-center gap-2 sm:bottom-6 sm:right-6 sm:flex sm:gap-3">
-            <div className="hidden border border-[var(--border)] bg-[rgba(10,10,10,0.82)] px-3 py-2 font-mono text-[11px] uppercase tracking-[0.24em] text-[var(--text-muted)] sm:block">
+            <div className="hidden border border-(--border) bg-[rgba(10,10,10,0.82)] px-3 py-2 font-mono text-[11px] uppercase tracking-[0.24em] text-(--text-muted) sm:block">
               {Math.round(stageSize.width)} x {Math.round(stageSize.height)}
             </div>
             <button
               type="button"
               onClick={onRequestUpload}
-              className="pointer-events-auto flex min-w-0 items-center gap-2 overflow-hidden border border-[var(--border)] bg-[rgba(10,10,10,0.82)] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--text-primary)] transition-colors hover:border-[rgba(245,158,11,0.4)] hover:text-[var(--accent)] sm:text-[11px] sm:tracking-[0.16em]"
+              className="pointer-events-auto flex min-w-0 items-center gap-2 overflow-hidden border border-(--border) bg-[rgba(10,10,10,0.82)] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-foreground transition-colors hover:border-[rgba(245,158,11,0.4)] hover:text-(--accent) sm:text-[11px] sm:tracking-[0.16em]"
             >
               <Upload className="size-3.5" />
               Replace
@@ -3591,7 +3591,7 @@ export const CanvasStage = React.forwardRef<
           <div
             role="toolbar"
             aria-label="Canvas controls"
-            className="scrollbar-none absolute bottom-3 left-1/2 z-10 flex w-max max-w-[calc(100%-1.5rem)] -translate-x-1/2 touch-pan-x items-center justify-start gap-1 overflow-x-auto whitespace-nowrap rounded-full border border-[var(--border)] bg-[#0a0a0a] px-1.5 py-1.5 shadow-[0_10px_35px_rgba(0,0,0,0.45)] sm:bottom-6 sm:gap-2 sm:rounded-none sm:bg-[rgba(10,10,10,0.9)] sm:px-2 sm:py-2 sm:backdrop-blur-xl"
+            className="scrollbar-none absolute bottom-3 left-1/2 z-10 flex w-max max-w-[calc(100%-1.5rem)] -translate-x-1/2 touch-pan-x items-center justify-start gap-1 overflow-x-auto whitespace-nowrap rounded-full border border-(--border) bg-[#0a0a0a] px-1.5 py-1.5 shadow-[0_10px_35px_rgba(0,0,0,0.45)] sm:bottom-6 sm:gap-2 sm:rounded-none sm:bg-[rgba(10,10,10,0.9)] sm:px-2 sm:py-2 sm:backdrop-blur-xl"
           >
             {selectedTextLayer ? (
               <Button
@@ -3638,7 +3638,7 @@ export const CanvasStage = React.forwardRef<
             </Button>
             <div
               ref={zoomReadoutRef}
-              className="min-w-[58px] px-1 text-center font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)] sm:min-w-[88px] sm:px-3 sm:text-[11px] sm:tracking-[0.22em]"
+              className="min-w-14.5 px-1 text-center font-mono text-[10px] uppercase tracking-[0.16em] text-(--text-muted) sm:min-w-22 sm:px-3 sm:text-[11px] sm:tracking-[0.22em]"
             >
               {Math.round(viewport.zoom * 100)}%
             </div>
@@ -3653,7 +3653,7 @@ export const CanvasStage = React.forwardRef<
             <Button size="sm" variant="outline" onClick={resetViewport}>
               Fit
             </Button>
-            <div className="hidden min-w-0 max-w-[36vw] border-l border-[var(--border)] pl-3 font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)] xl:block">
+            <div className="hidden min-w-0 max-w-[36vw] border-l border-(--border) pl-3 font-mono text-[11px] uppercase tracking-[0.18em] text-(--text-muted) xl:block">
               <span className="block truncate">
                 Move • Resize Corners • Double-Click Edit • Space to Pan •
                 Delete to Remove

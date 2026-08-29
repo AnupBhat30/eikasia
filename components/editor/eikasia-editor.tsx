@@ -162,16 +162,16 @@ function MobileProjectMenu({
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
           <div className="space-y-5">
           <div>
-            <p className="text-sm font-medium text-[var(--text-primary)]">
+            <p className="text-sm font-medium text-foreground">
               Export image
             </p>
-            <p className="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">
+            <p className="mt-1 text-[11px] leading-5 text-(--text-muted)">
               Choose where you will share it, then confirm the file settings.
             </p>
           </div>
 
           <div>
-            <p className="text-[10px] uppercase tracking-[0.22em] text-[var(--accent)]">
+            <p className="text-[10px] uppercase tracking-[0.22em] text-(--accent)">
               Destination
             </p>
             <div className="mt-3 grid grid-cols-2 gap-2">
@@ -182,10 +182,10 @@ function MobileProjectMenu({
                   aria-pressed={exportTarget === target.id}
                   onClick={() => onExportTargetChange(target.id)}
                   className={cn(
-                    "min-w-0 overflow-hidden break-words rounded-lg border px-1.5 py-2 text-[9px] uppercase leading-4 tracking-[0.08em] [overflow-wrap:anywhere] sm:px-2 sm:text-[10px] sm:tracking-[0.1em]",
+                    "min-w-0 overflow-hidden wrap-anywhere rounded-lg border px-1.5 py-2 text-[9px] uppercase leading-4 tracking-[0.08em] sm:px-2 sm:text-[10px] sm:tracking-widest",
                     exportTarget === target.id
-                      ? "border-[var(--accent)] bg-[rgba(197,160,89,0.12)] text-[var(--accent)]"
-                      : "border-[var(--border)] text-[var(--text-muted)]",
+                      ? "border-(--accent) bg-[rgba(197,160,89,0.12)] text-(--accent)"
+                      : "border-(--border) text-(--text-muted)",
                   )}
                 >
                   {target.shortLabel}
@@ -193,17 +193,17 @@ function MobileProjectMenu({
               ))}
             </div>
             <div className="mt-2 rounded-lg bg-[rgba(255,255,255,0.025)] px-3 py-2">
-              <p className="font-mono text-[10px] leading-4 text-[var(--text-primary)]">
+              <p className="font-mono text-[10px] leading-4 text-foreground">
                 {exportSize
                   ? `${exportSize.width} × ${exportSize.height}px`
                   : getExportTarget(exportTarget).detail}
               </p>
               {exportSize ? (
-                <p className="mt-1 text-[10px] leading-4 text-[var(--text-muted)]">
+                <p className="mt-1 text-[10px] leading-4 text-(--text-muted)">
                   {getExportTarget(exportTarget).detail}
                 </p>
               ) : null}
-              <p className="mt-1 text-[10px] leading-4 text-[var(--text-muted)]">
+              <p className="mt-1 text-[10px] leading-4 text-(--text-muted)">
                 Best crop: {getExportTarget(exportTarget).recommendedCrop}
               </p>
               {exportTarget !== "original" && exportFormat === "png" ? (
@@ -220,7 +220,7 @@ function MobileProjectMenu({
           </div>
 
           <div>
-            <p className="text-[10px] uppercase tracking-[0.22em] text-[var(--accent)]">
+            <p className="text-[10px] uppercase tracking-[0.22em] text-(--accent)">
               Export format
             </p>
             <div className="mt-3 grid grid-cols-2 gap-2">
@@ -233,8 +233,8 @@ function MobileProjectMenu({
                   className={cn(
                     "min-h-10 rounded-lg border text-[10px] uppercase tracking-[0.18em]",
                     exportFormat === format
-                      ? "border-[var(--accent)] bg-[rgba(197,160,89,0.12)] text-[var(--accent)]"
-                      : "border-[var(--border)] text-[var(--text-muted)]",
+                      ? "border-(--accent) bg-[rgba(197,160,89,0.12)] text-(--accent)"
+                      : "border-(--border) text-(--text-muted)",
                   )}
                 >
                   {format === "jpeg" ? "JPG" : "PNG"}
@@ -244,7 +244,7 @@ function MobileProjectMenu({
           </div>
 
           <div>
-            <p className="text-[10px] uppercase tracking-[0.22em] text-[var(--accent)]">
+            <p className="text-[10px] uppercase tracking-[0.22em] text-(--accent)">
               Quality
             </p>
             <div className="mt-3 grid grid-cols-5 gap-2">
@@ -257,8 +257,8 @@ function MobileProjectMenu({
                   className={cn(
                     "min-h-10 rounded-lg border font-mono text-[10px]",
                     exportQuality === Number(option.value)
-                      ? "border-[var(--accent)] bg-[rgba(197,160,89,0.12)] text-[var(--accent)]"
-                      : "border-[var(--border)] text-[var(--text-muted)]",
+                      ? "border-(--accent) bg-[rgba(197,160,89,0.12)] text-(--accent)"
+                      : "border-(--border) text-(--text-muted)",
                   )}
                 >
                   {option.label}
@@ -267,8 +267,8 @@ function MobileProjectMenu({
             </div>
           </div>
 
-          <div className="border-t border-[var(--border)] pt-4">
-            <p className="text-[10px] uppercase tracking-[0.22em] text-[var(--text-muted)]">
+          <div className="border-t border-(--border) pt-4">
+            <p className="text-[10px] uppercase tracking-[0.22em] text-(--text-muted)">
               Project
             </p>
             <div className="mt-3 grid grid-cols-2 gap-2">
@@ -297,7 +297,7 @@ function MobileProjectMenu({
           </div>
           </div>
         </div>
-        <div className="shrink-0 border-t border-[var(--border)] bg-[var(--surface)] p-4">
+        <div className="shrink-0 border-t border-(--border) bg-(--surface) p-4">
           <Button
             variant="amber"
             className="h-12 w-full rounded-xl"
@@ -347,29 +347,29 @@ function DesktopExportMenu({
       <PopoverTrigger asChild>
         <Button
           variant="outline"
-          className="h-11 w-[210px] justify-between rounded-lg bg-[rgba(255,255,255,0.025)] px-3 normal-case tracking-normal"
+          className="h-11 w-52.5 justify-between rounded-lg bg-[rgba(255,255,255,0.025)] px-3 normal-case tracking-normal"
         >
           <span className="min-w-0 text-left">
-            <span className="block truncate text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--text-primary)]">
+            <span className="block truncate text-[10px] font-medium uppercase tracking-[0.12em] text-foreground">
               {target.label}
             </span>
-            <span className="mt-0.5 block truncate font-mono text-[9px] text-[var(--text-muted)]">
+            <span className="mt-0.5 block truncate font-mono text-[9px] text-(--text-muted)">
               {exportSize
                 ? `${exportSize.width} × ${exportSize.height}px · ${exportFormat === "jpeg" ? `JPG ${exportQuality}` : "PNG"}`
                 : target.detail}
             </span>
           </span>
-          <ChevronDown className="size-4 shrink-0 text-[var(--text-muted)]" />
+          <ChevronDown className="size-4 shrink-0 text-(--text-muted)" />
         </Button>
       </PopoverTrigger>
       <PopoverContent
         align="end"
         sideOffset={10}
-        className="w-[360px] rounded-xl p-4 shadow-[0_24px_80px_rgba(0,0,0,0.65)]"
+        className="w-90 rounded-xl p-4 shadow-[0_24px_80px_rgba(0,0,0,0.65)]"
       >
         <div className="space-y-5">
           <div>
-            <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent)]">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-(--accent)">
               Export destination
             </p>
             <Select
@@ -387,13 +387,13 @@ function DesktopExportMenu({
                 ))}
               </SelectContent>
             </Select>
-            <div className="mt-3 rounded-lg border border-[var(--border)] bg-[rgba(255,255,255,0.02)] px-3 py-2.5">
-              <p className="font-mono text-[10px] text-[var(--text-primary)]">
+            <div className="mt-3 rounded-lg border border-(--border) bg-[rgba(255,255,255,0.02)] px-3 py-2.5">
+              <p className="font-mono text-[10px] text-foreground">
                 {exportSize
                   ? `${exportSize.width} × ${exportSize.height}px`
                   : target.detail}
               </p>
-              <p className="mt-1 text-[10px] leading-4 text-[var(--text-muted)]">
+              <p className="mt-1 text-[10px] leading-4 text-(--text-muted)">
                 Recommended crop: {target.recommendedCrop}
               </p>
               {exportWarning ? (
@@ -406,7 +406,7 @@ function DesktopExportMenu({
 
           <div className="grid grid-cols-[1fr_1.6fr] gap-4">
             <div>
-              <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
+              <p className="text-[10px] uppercase tracking-[0.16em] text-(--text-muted)">
                 Format
               </p>
               <div className="mt-2 grid grid-cols-2 gap-1.5">
@@ -417,10 +417,10 @@ function DesktopExportMenu({
                     aria-pressed={exportFormat === format}
                     onClick={() => onExportFormatChange(format)}
                     className={cn(
-                      "h-9 rounded-lg border text-[9px] uppercase tracking-[0.1em]",
+                      "h-9 rounded-lg border text-[9px] uppercase tracking-widest",
                       exportFormat === format
-                        ? "border-[var(--accent)] bg-[rgba(197,160,89,0.12)] text-[var(--accent)]"
-                        : "border-[var(--border)] text-[var(--text-muted)]",
+                        ? "border-(--accent) bg-[rgba(197,160,89,0.12)] text-(--accent)"
+                        : "border-(--border) text-(--text-muted)",
                     )}
                   >
                     {format === "jpeg" ? "JPG" : "PNG"}
@@ -429,7 +429,7 @@ function DesktopExportMenu({
               </div>
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
+              <p className="text-[10px] uppercase tracking-[0.16em] text-(--text-muted)">
                 Quality
               </p>
               <div className="mt-2 grid grid-cols-5 gap-1.5">
@@ -442,8 +442,8 @@ function DesktopExportMenu({
                     className={cn(
                       "h-9 min-w-0 rounded-lg border font-mono text-[9px]",
                       exportQuality === Number(option.value)
-                        ? "border-[var(--accent)] bg-[rgba(197,160,89,0.12)] text-[var(--accent)]"
-                        : "border-[var(--border)] text-[var(--text-muted)]",
+                        ? "border-(--accent) bg-[rgba(197,160,89,0.12)] text-(--accent)"
+                        : "border-(--border) text-(--text-muted)",
                     )}
                   >
                     {option.label}
@@ -492,29 +492,29 @@ function ExportResultSheet({
   const format = result.blob.type === "image/png" ? "PNG" : "JPG";
 
   return (
-    <div className="fixed inset-0 z-[80] flex bg-[rgba(4,4,6,0.94)] p-0 backdrop-blur-xl sm:items-center sm:justify-center sm:p-6">
+    <div className="fixed inset-0 z-80 flex bg-[rgba(4,4,6,0.94)] p-0 backdrop-blur-xl sm:items-center sm:justify-center sm:p-6">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="export-result-title"
-        className="flex h-[100dvh] min-h-0 w-full flex-col overflow-hidden bg-[#101013] sm:h-[min(90dvh,820px)] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-[var(--border)] sm:shadow-[0_30px_100px_rgba(0,0,0,0.75)]"
+        className="flex h-dvh min-h-0 w-full flex-col overflow-hidden bg-[#101013] sm:h-[min(90dvh,820px)] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-(--border) sm:shadow-[0_30px_100px_rgba(0,0,0,0.75)]"
       >
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--border)] px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:px-5 sm:pt-4">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-(--border) px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:px-5 sm:pt-4">
           <div className="min-w-0">
             <p
               id="export-result-title"
-              className="text-sm font-medium text-[var(--text-primary)]"
+              className="text-sm font-medium text-foreground"
             >
               Your image is ready
             </p>
-            <p className="mt-1 truncate font-mono text-[9px] uppercase tracking-[0.1em] text-[var(--text-muted)] sm:text-[10px]">
+            <p className="mt-1 truncate font-mono text-[9px] uppercase tracking-widest text-(--text-muted) sm:text-[10px]">
               {result.width} × {result.height}px · {format} · {megabytes} MB
             </p>
           </div>
           <button
             type="button"
             aria-label="Close export preview"
-            className="flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-white/5 hover:text-white"
+            className="flex size-11 shrink-0 items-center justify-center rounded-full text-(--text-muted) transition-colors hover:bg-white/5 hover:text-white"
             onClick={onClose}
           >
             <X className="size-5" />
@@ -534,8 +534,8 @@ function ExportResultSheet({
           />
         </div>
 
-        <footer className="shrink-0 border-t border-[var(--border)] bg-[#111114] px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-3 sm:px-5 sm:pb-5 sm:pt-4">
-          <p className="mb-3 text-center text-[10px] leading-4 text-[var(--text-muted)] sm:text-[11px]">
+        <footer className="shrink-0 border-t border-(--border) bg-[#111114] px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-3 sm:px-5 sm:pb-5 sm:pt-4">
+          <p className="mb-3 text-center text-[10px] leading-4 text-(--text-muted) sm:text-[11px]">
             {result.canNativeShare
               ? "iPhone: choose Save Image. Android: choose Photos, Files, or the app you want."
               : "Download saves the file through your browser. You can also touch and hold the preview to save it."}
@@ -544,7 +544,7 @@ function ExportResultSheet({
           {message ? (
             <p
               aria-live="polite"
-              className="mb-3 rounded-lg border border-[rgba(197,160,89,0.3)] bg-[rgba(197,160,89,0.08)] px-3 py-2 text-center text-[10px] leading-4 text-[var(--accent)]"
+              className="mb-3 rounded-lg border border-[rgba(197,160,89,0.3)] bg-[rgba(197,160,89,0.08)] px-3 py-2 text-center text-[10px] leading-4 text-(--accent)"
             >
               {message}
             </p>
@@ -1020,7 +1020,7 @@ function EikasiaEditorShell() {
   }, [handleDownloadPreparedExport, preparedExport]);
 
   return (
-    <div className="app-shell relative min-h-screen min-h-[100dvh] overflow-hidden bg-[var(--background)] text-[var(--text-primary)]">
+    <div className="app-shell relative min-h-dvh overflow-hidden bg-background text-foreground">
       <h1 className="sr-only">
         Eikasia — private cinematic photo editor and film simulation app
       </h1>
@@ -1051,8 +1051,8 @@ function EikasiaEditorShell() {
         />
       ) : null}
 
-      <div className="relative flex h-[100dvh] flex-col">
-        <header className="relative z-40 shrink-0 border-b border-[var(--border)] bg-[#0a0a0a] pt-[env(safe-area-inset-top)] md:hidden">
+      <div className="relative flex h-dvh flex-col">
+        <header className="relative z-40 shrink-0 border-b border-(--border) bg-[#0a0a0a] pt-[env(safe-area-inset-top)] md:hidden">
           <div className="flex h-14 items-center justify-between gap-2 px-2.5">
             <div className="flex min-w-0 items-center gap-2">
               <Image
@@ -1060,9 +1060,9 @@ function EikasiaEditorShell() {
                 alt=""
                 width={30}
                 height={30}
-                className="size-7 shrink-0 rounded-md border border-[var(--border)] bg-[rgba(255,255,255,0.03)] p-1"
+                className="size-7 shrink-0 rounded-md border border-(--border) bg-[rgba(255,255,255,0.03)] p-1"
               />
-              <p className="truncate font-logo text-[13px] uppercase tracking-[0.18em] text-[var(--text-primary)]">
+              <p className="truncate font-logo text-[13px] uppercase tracking-[0.18em] text-foreground">
                 Eikasia
               </p>
             </div>
@@ -1107,8 +1107,8 @@ function EikasiaEditorShell() {
           </div>
         </header>
 
-        <header className="relative z-40 hidden border-b border-[var(--border)] bg-[rgba(9,9,11,0.9)] shadow-[0_10px_35px_rgba(0,0,0,0.18)] backdrop-blur-xl md:block">
-          <div className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 xl:grid-cols-[1fr_auto_1fr] xl:px-6">
+        <header className="relative z-40 hidden border-b border-(--border) bg-[rgba(9,9,11,0.9)] shadow-[0_10px_35px_rgba(0,0,0,0.18)] backdrop-blur-xl md:block">
+          <div className="grid min-h-18 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 xl:grid-cols-[1fr_auto_1fr] xl:px-6">
             <div className="flex min-w-0 items-center gap-3 sm:gap-4">
               <div className="flex min-w-0 items-center gap-2 sm:gap-3">
                 <Image
@@ -1116,13 +1116,13 @@ function EikasiaEditorShell() {
                   alt=""
                   width={36}
                   height={36}
-                  className="size-9 shrink-0 rounded-sm border border-[var(--border)] bg-[rgba(255,255,255,0.02)] p-1"
+                  className="size-9 shrink-0 rounded-sm border border-(--border) bg-[rgba(255,255,255,0.02)] p-1"
                 />
                 <div className="min-w-0">
-                  <p className="truncate whitespace-nowrap font-logo text-lg leading-none uppercase tracking-[0.48em] text-[var(--text-primary)]">
+                  <p className="truncate whitespace-nowrap font-logo text-lg leading-none uppercase tracking-[0.48em] text-foreground">
                     EIKASIA
                   </p>
-                  <p className="mt-1 text-[11px] uppercase tracking-[0.24em] text-[var(--text-muted)]">
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.24em] text-(--text-muted)">
                     cinematic image editor
                   </p>
                 </div>
@@ -1155,7 +1155,7 @@ function EikasiaEditorShell() {
               </Button>
             </div>
 
-            <div className="col-span-2 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border)]/70 pt-3 xl:col-span-1 xl:border-t-0 xl:pt-0">
+            <div className="col-span-2 flex flex-wrap items-center justify-end gap-2 border-t border-(--border)/70 pt-3 xl:col-span-1 xl:border-t-0 xl:pt-0">
               <div className="mr-auto flex items-center gap-1 xl:mr-1">
                 <Button
                   className="size-10 rounded-lg"
@@ -1211,8 +1211,8 @@ function EikasiaEditorShell() {
           </div>
 
           {notice ? (
-            <div aria-live="polite" className="border-t border-[var(--border)] px-4 py-3 xl:px-6">
-              <p className="break-words font-mono text-[10px] leading-5 uppercase tracking-[0.16em] text-[var(--accent)] sm:text-[11px] sm:tracking-[0.22em]">
+            <div aria-live="polite" className="border-t border-(--border) px-4 py-3 xl:px-6">
+              <p className="wrap-anywhere font-mono text-[10px] leading-5 uppercase tracking-[0.16em] text-(--accent) sm:text-[11px] sm:tracking-[0.22em]">
                 {notice}
               </p>
             </div>
@@ -1221,17 +1221,17 @@ function EikasiaEditorShell() {
 
         {notice ? (
           <div aria-live="polite" className="absolute left-3 right-3 top-[calc(env(safe-area-inset-top)+3.75rem)] z-50 rounded-xl border border-[rgba(197,160,89,0.45)] bg-[rgba(16,16,20,0.96)] px-4 py-3 shadow-[0_16px_50px_rgba(0,0,0,0.5)] backdrop-blur-xl md:hidden">
-            <p className="break-words font-mono text-[10px] leading-5 uppercase tracking-[0.14em] text-[var(--accent)]">
+            <p className="wrap-anywhere font-mono text-[10px] leading-5 uppercase tracking-[0.14em] text-(--accent)">
               {notice}
             </p>
           </div>
         ) : null}
 
         <div className="relative grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[72px_minmax(0,1fr)_292px] lg:grid-cols-[188px_minmax(0,1fr)_308px] xl:grid-cols-[220px_minmax(0,1fr)_332px] 2xl:grid-cols-[232px_minmax(0,1fr)_348px]">
-          <aside className="hidden min-h-0 overflow-hidden border-r border-[var(--border)] bg-[linear-gradient(180deg,rgba(21,21,24,0.98),rgba(14,14,17,0.98))] md:col-start-1 md:row-start-1 md:block">
+          <aside className="hidden min-h-0 overflow-hidden border-r border-(--border) bg-[linear-gradient(180deg,rgba(21,21,24,0.98),rgba(14,14,17,0.98))] md:col-start-1 md:row-start-1 md:block">
             <div className="flex h-full min-h-0 flex-col">
               <div className="hidden px-4 pb-2 pt-5 lg:block">
-                <p className="text-[9px] uppercase tracking-[0.22em] text-[var(--text-muted)]">
+                <p className="text-[9px] uppercase tracking-[0.22em] text-(--text-muted)">
                   Tools
                 </p>
               </div>
@@ -1252,14 +1252,14 @@ function EikasiaEditorShell() {
                       className={cn(
                         "relative flex min-h-12 min-w-0 items-center justify-center gap-3 overflow-hidden rounded-lg px-3 py-3 text-left transition-colors lg:justify-start",
                         active
-                          ? "bg-[rgba(197,160,89,0.12)] text-[var(--accent)] shadow-[inset_0_0_0_1px_rgba(197,160,89,0.16)]"
-                          : "text-[var(--text-muted)] hover:bg-[rgba(255,255,255,0.045)] hover:text-[var(--text-primary)]",
+                          ? "bg-[rgba(197,160,89,0.12)] text-(--accent) shadow-[inset_0_0_0_1px_rgba(197,160,89,0.16)]"
+                          : "text-(--text-muted) hover:bg-[rgba(255,255,255,0.045)] hover:text-foreground",
                       )}
                     >
                       <span
                         className={cn(
                           "absolute inset-y-2 left-0 w-0.5 rounded-full bg-transparent",
-                          active && "bg-[var(--accent)] shadow-[0_0_14px_rgba(197,160,89,0.55)]",
+                          active && "bg-(--accent) shadow-[0_0_14px_rgba(197,160,89,0.55)]",
                         )}
                       />
                       <Icon className="size-5 shrink-0" />
@@ -1271,14 +1271,14 @@ function EikasiaEditorShell() {
                 })}
               </nav>
 
-              <div className="mt-auto hidden border-t border-[var(--border)] p-4 lg:block">
-                <p className="text-[9px] uppercase tracking-[0.18em] text-[var(--text-muted)]">
+              <div className="mt-auto hidden border-t border-(--border) p-4 lg:block">
+                <p className="text-[9px] uppercase tracking-[0.18em] text-(--text-muted)">
                   Active Tool
                 </p>
-                <p className="mt-2 truncate text-xs font-medium text-[var(--text-primary)]">
+                <p className="mt-2 truncate text-xs font-medium text-foreground">
                   {SIDEBAR_TABS.find((tab) => tab.id === activeTab)?.label}
                 </p>
-                <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--text-muted)]">
+                <p className="mt-1 line-clamp-2 text-xs leading-5 text-(--text-muted)">
                   {project.imageName
                     ? `Editing ${project.imageName}`
                     : "Drop an image to start grading, titling, and framing."}
@@ -1296,8 +1296,8 @@ function EikasiaEditorShell() {
               mobileBottomInset={mobileToolsOpen ? mobileDrawerHeight : 0}
             />
             {!mobileToolsOpen && activeTab === "text" && selectedTextId ? (
-              <div className="absolute inset-x-3 bottom-[4.5rem] z-30 flex items-center justify-between gap-3 rounded-xl border border-[rgba(197,160,89,0.38)] bg-[rgba(12,12,15,0.92)] px-3 py-2.5 shadow-[0_14px_44px_rgba(0,0,0,0.48)] backdrop-blur-lg md:hidden">
-                <p className="min-w-0 text-[10px] leading-4 text-[var(--text-primary)]">
+              <div className="absolute inset-x-3 bottom-18 z-30 flex items-center justify-between gap-3 rounded-xl border border-[rgba(197,160,89,0.38)] bg-[rgba(12,12,15,0.92)] px-3 py-2.5 shadow-[0_14px_44px_rgba(0,0,0,0.48)] backdrop-blur-lg md:hidden">
+                <p className="min-w-0 text-[10px] leading-4 text-foreground">
                   Text selected. Drag it to position, or open its style controls.
                 </p>
                 <Button
@@ -1313,18 +1313,18 @@ function EikasiaEditorShell() {
             ) : null}
           </main>
 
-          <aside className="hidden min-h-0 overflow-hidden border-l border-[var(--border)] bg-[rgba(17,17,20,0.97)] shadow-[-14px_0_40px_rgba(0,0,0,0.12)] md:col-start-3 md:row-start-1 md:block">
+          <aside className="hidden min-h-0 overflow-hidden border-l border-(--border) bg-[rgba(17,17,20,0.97)] shadow-[-14px_0_40px_rgba(0,0,0,0.12)] md:col-start-3 md:row-start-1 md:block">
             <div className="flex h-full min-h-0 flex-col">
-              <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] px-4">
+              <div className="flex h-14 shrink-0 items-center justify-between border-b border-(--border) px-4">
                 <div>
-                  <p className="text-[9px] uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                  <p className="text-[9px] uppercase tracking-[0.18em] text-(--text-muted)">
                     Controls
                   </p>
-                  <p className="mt-1 text-xs font-medium text-[var(--text-primary)]">
+                  <p className="mt-1 text-xs font-medium text-foreground">
                     {SIDEBAR_TABS.find((tab) => tab.id === activeTab)?.label}
                   </p>
                 </div>
-                <span className="size-1.5 rounded-full bg-[var(--accent)] shadow-[0_0_12px_rgba(197,160,89,0.7)]" />
+                <span className="size-1.5 rounded-full bg-(--accent) shadow-[0_0_12px_rgba(197,160,89,0.7)]" />
               </div>
               <div className="min-h-0 flex-1">
                 <InspectorPanel onTextLayerAdded={centerAddedText} />
@@ -1347,13 +1347,13 @@ function EikasiaEditorShell() {
                 ref={mobileDrawerRef}
                 aria-label={`${SIDEBAR_TABS.find((tab) => tab.id === activeTab)?.label} controls`}
                 className={cn(
-                  "mobile-tool-drawer absolute inset-x-0 bottom-0 z-30 flex max-h-[calc(100%-0.5rem)] flex-col overflow-hidden rounded-t-2xl border-x border-t border-[var(--border)] bg-[#111114] shadow-[0_-22px_70px_rgba(0,0,0,0.68)] animate-[mobile-drawer-in_180ms_ease-out] md:hidden",
+                  "mobile-tool-drawer absolute inset-x-0 bottom-0 z-30 flex max-h-[calc(100%-0.5rem)] flex-col overflow-hidden rounded-t-2xl border-x border-t border-(--border) bg-[#111114] shadow-[0_-22px_70px_rgba(0,0,0,0.68)] animate-[mobile-drawer-in_180ms_ease-out] md:hidden",
                   mobileToolsExpanded
                     ? "h-[min(68dvh,620px)] max-h-[calc(100%-5rem)]"
                     : "h-[clamp(200px,34dvh,300px)] max-h-[calc(100%-9rem)]",
                 )}
               >
-              <div className="shrink-0 border-b border-[var(--border)] px-3 pb-2">
+              <div className="shrink-0 border-b border-(--border) px-3 pb-2">
                 <button
                   type="button"
                   className="flex h-7 w-full items-center justify-center"
@@ -1370,8 +1370,8 @@ function EikasiaEditorShell() {
 
                       return (
                         <>
-                          {Icon ? <Icon className="size-4 text-[var(--accent)]" /> : null}
-                          <p className="truncate text-[11px] font-medium uppercase tracking-[0.2em] text-[var(--text-primary)]">
+                          {Icon ? <Icon className="size-4 text-(--accent)" /> : null}
+                          <p className="truncate text-[11px] font-medium uppercase tracking-[0.2em] text-foreground">
                             {tool?.label}
                           </p>
                         </>
@@ -1379,13 +1379,13 @@ function EikasiaEditorShell() {
                     })()}
                   </div>
                   <div className="flex items-center gap-1">
-                    <span className="mr-1 hidden items-center gap-1.5 rounded-full border border-[var(--border)] px-2 py-1 font-mono text-[8px] uppercase tracking-[0.12em] text-[var(--text-muted)] min-[360px]:inline-flex">
-                      <span className="size-1.5 rounded-full bg-[var(--accent)]" />
+                    <span className="mr-1 hidden items-center gap-1.5 rounded-full border border-(--border) px-2 py-1 font-mono text-[8px] uppercase tracking-[0.12em] text-(--text-muted) min-[360px]:inline-flex">
+                      <span className="size-1.5 rounded-full bg-(--accent)" />
                       {activeTab === "crop" ? "Apply below" : "Live"}
                     </span>
                     <button
                       type="button"
-                      className="flex size-10 items-center justify-center rounded-full text-[var(--text-muted)]"
+                      className="flex size-10 items-center justify-center rounded-full text-(--text-muted)"
                       aria-label={mobileToolsExpanded ? "Collapse controls" : "Expand controls"}
                       onClick={() => setMobileToolsExpanded((expanded) => !expanded)}
                     >
@@ -1398,7 +1398,7 @@ function EikasiaEditorShell() {
                     </button>
                     <button
                       type="button"
-                      className="flex size-10 items-center justify-center rounded-full text-[var(--text-muted)]"
+                      className="flex size-10 items-center justify-center rounded-full text-(--text-muted)"
                       aria-label="Close controls"
                       onClick={() => {
                         setMobileToolsOpen(false);
@@ -1422,7 +1422,7 @@ function EikasiaEditorShell() {
                 />
               </div>
               {activeTab === "crop" ? (
-                <div className="shrink-0 border-t border-[var(--border)] bg-[rgba(15,15,18,0.98)] p-3 shadow-[0_-12px_32px_rgba(0,0,0,0.34)]">
+                <div className="shrink-0 border-t border-(--border) bg-[rgba(15,15,18,0.98)] p-3 shadow-[0_-12px_32px_rgba(0,0,0,0.34)]">
                   <Button
                     variant="amber"
                     className="h-11 w-full rounded-xl"
@@ -1439,7 +1439,7 @@ function EikasiaEditorShell() {
                     <Check className="size-4" />
                     Apply Crop
                   </Button>
-                  <p className="mt-1.5 text-center text-[9px] leading-4 tracking-[0.06em] text-[var(--text-muted)]">
+                  <p className="mt-1.5 text-center text-[9px] leading-4 tracking-[0.06em] text-(--text-muted)">
                     Only the visible crop will be exported.
                   </p>
                 </div>
@@ -1451,9 +1451,9 @@ function EikasiaEditorShell() {
 
         <nav
           aria-label="Editor tools"
-          className="relative z-40 shrink-0 border-t border-[var(--border)] bg-[#0c0c0f] pb-[env(safe-area-inset-bottom)] md:hidden"
+          className="relative z-40 shrink-0 border-t border-(--border) bg-[#0c0c0f] pb-[env(safe-area-inset-bottom)] md:hidden"
         >
-          <div className="scrollbar-none flex h-[68px] touch-pan-x gap-0.5 overflow-x-auto px-1.5">
+          <div className="scrollbar-none flex h-17 touch-pan-x gap-0.5 overflow-x-auto px-1.5">
             {SIDEBAR_TABS.map((tab) => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;
@@ -1476,18 +1476,18 @@ function EikasiaEditorShell() {
                     }
                   }}
                   className={cn(
-                    "relative flex min-w-[60px] flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[9px] uppercase tracking-[0.08em] transition-colors",
+                    "relative flex min-w-15 flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[9px] uppercase tracking-[0.08em] transition-colors",
                     active && mobileToolsOpen
-                      ? "bg-[rgba(197,160,89,0.11)] text-[var(--accent)]"
-                      : "text-[var(--text-muted)]",
+                      ? "bg-[rgba(197,160,89,0.11)] text-(--accent)"
+                      : "text-(--text-muted)",
                   )}
                 >
-                  <Icon className="size-[18px] shrink-0" />
+                  <Icon className="size-4.5 shrink-0" />
                   <span className="max-w-full truncate">
                     {tab.id === "adjustments" ? "Adjust" : tab.id === "crop" ? "Crop" : tab.label}
                   </span>
                   {active && mobileToolsOpen ? (
-                    <span className="absolute bottom-1 h-0.5 w-5 rounded-full bg-[var(--accent)]" />
+                    <span className="absolute bottom-1 h-0.5 w-5 rounded-full bg-(--accent)" />
                   ) : null}
                 </button>
               );
