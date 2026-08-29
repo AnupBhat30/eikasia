@@ -13,6 +13,7 @@ import {
   LoaderCircle,
   Pencil,
   Redo2,
+  Share2,
   SlidersHorizontal,
   Type,
   Undo2,
@@ -20,7 +21,11 @@ import {
   X,
 } from "lucide-react";
 
-import { exportProjectImage } from "@/lib/exportImage";
+import {
+  downloadImageBlob,
+  exportProjectImage,
+  type ExportImageResult,
+} from "@/lib/exportImage";
 import {
   CanvasStage,
   type CanvasStageHandle,
@@ -83,6 +88,12 @@ const ACCEPTED_SOURCE_TYPES = new Set([
 ]);
 const ACCEPTED_SOURCE_EXTENSION = /\.(?:png|jpe?g|webp|avif|heic|heif)$/i;
 
+type PreparedExport = ExportImageResult & {
+  previewUrl: string;
+  file: File;
+  canNativeShare: boolean;
+};
+
 function loadImageDimensions(src: string) {
   return new Promise<{ width: number; height: number }>((resolve, reject) => {
     const image = new window.Image();
@@ -133,8 +144,14 @@ function MobileProjectMenu({
           variant="amber"
           className="size-10 rounded-full"
           aria-label="Open export settings"
+          aria-busy={exporting}
+          disabled={exporting}
         >
-          <Download className="size-5" />
+          {exporting ? (
+            <LoaderCircle className="size-5 animate-spin" />
+          ) : (
+            <Download className="size-5" />
+          )}
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -447,6 +464,118 @@ function DesktopExportMenu({
   );
 }
 
+function ExportResultSheet({
+  result,
+  message,
+  onClose,
+  onDownload,
+  onShare,
+}: {
+  result: PreparedExport;
+  message: string | null;
+  onClose: () => void;
+  onDownload: () => void;
+  onShare: () => void;
+}) {
+  React.useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [onClose]);
+
+  const megabytes = (result.bytes / 1_000_000).toFixed(1);
+  const format = result.blob.type === "image/png" ? "PNG" : "JPG";
+
+  return (
+    <div className="fixed inset-0 z-[80] flex bg-[rgba(4,4,6,0.94)] p-0 backdrop-blur-xl sm:items-center sm:justify-center sm:p-6">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="export-result-title"
+        className="flex h-[100dvh] min-h-0 w-full flex-col overflow-hidden bg-[#101013] sm:h-[min(90dvh,820px)] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-[var(--border)] sm:shadow-[0_30px_100px_rgba(0,0,0,0.75)]"
+      >
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--border)] px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:px-5 sm:pt-4">
+          <div className="min-w-0">
+            <p
+              id="export-result-title"
+              className="text-sm font-medium text-[var(--text-primary)]"
+            >
+              Your image is ready
+            </p>
+            <p className="mt-1 truncate font-mono text-[9px] uppercase tracking-[0.1em] text-[var(--text-muted)] sm:text-[10px]">
+              {result.width} × {result.height}px · {format} · {megabytes} MB
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close export preview"
+            className="flex size-11 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-white/5 hover:text-white"
+            onClick={onClose}
+          >
+            <X className="size-5" />
+          </button>
+        </header>
+
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.055),transparent_62%),#08080a] p-3 sm:p-6">
+          <Image
+            src={result.previewUrl}
+            alt="Final exported image preview"
+            width={result.width}
+            height={result.height}
+            unoptimized
+            priority
+            draggable={false}
+            className="h-auto max-h-full w-auto max-w-full select-none object-contain shadow-[0_18px_70px_rgba(0,0,0,0.62)]"
+          />
+        </div>
+
+        <footer className="shrink-0 border-t border-[var(--border)] bg-[#111114] px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-3 sm:px-5 sm:pb-5 sm:pt-4">
+          <p className="mb-3 text-center text-[10px] leading-4 text-[var(--text-muted)] sm:text-[11px]">
+            {result.canNativeShare
+              ? "iPhone: choose Save Image. Android: choose Photos, Files, or the app you want."
+              : "Download saves the file through your browser. You can also touch and hold the preview to save it."}
+          </p>
+
+          {message ? (
+            <p
+              aria-live="polite"
+              className="mb-3 rounded-lg border border-[rgba(197,160,89,0.3)] bg-[rgba(197,160,89,0.08)] px-3 py-2 text-center text-[10px] leading-4 text-[var(--accent)]"
+            >
+              {message}
+            </p>
+          ) : null}
+
+          <div className={cn("grid gap-2", result.canNativeShare && "grid-cols-2")}>
+            {result.canNativeShare ? (
+              <Button
+                variant="amber"
+                className="h-12 rounded-xl px-2"
+                onClick={onShare}
+              >
+                <Share2 className="size-4" />
+                Save / Share
+              </Button>
+            ) : null}
+            <Button
+              variant={result.canNativeShare ? "outline" : "amber"}
+              className="h-12 rounded-xl px-2"
+              onClick={onDownload}
+            >
+              <Download className="size-4" />
+              Download
+            </Button>
+          </div>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 function EikasiaEditorShell() {
   const {
     project,
@@ -479,6 +608,12 @@ function EikasiaEditorShell() {
   const [mobileToolsExpanded, setMobileToolsExpanded] = React.useState(false);
   const mobileDrawerRef = React.useRef<HTMLElement>(null);
   const [mobileDrawerHeight, setMobileDrawerHeight] = React.useState(0);
+  const exportPreviewUrlRef = React.useRef<string | null>(null);
+  const [preparedExport, setPreparedExport] =
+    React.useState<PreparedExport | null>(null);
+  const [exportActionMessage, setExportActionMessage] = React.useState<
+    string | null
+  >(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const exportPreview = React.useMemo(() => {
     if (!project.imageWidth || !project.imageHeight) {
@@ -507,7 +642,20 @@ function EikasiaEditorShell() {
 
     return () => {
       urls.forEach((url) => URL.revokeObjectURL(url));
+      if (exportPreviewUrlRef.current) {
+        URL.revokeObjectURL(exportPreviewUrlRef.current);
+      }
     };
+  }, []);
+
+  const closeExportPreview = React.useCallback(() => {
+    if (exportPreviewUrlRef.current) {
+      URL.revokeObjectURL(exportPreviewUrlRef.current);
+      exportPreviewUrlRef.current = null;
+    }
+
+    setPreparedExport(null);
+    setExportActionMessage(null);
   }, []);
 
   React.useEffect(() => {
@@ -709,6 +857,7 @@ function EikasiaEditorShell() {
         setSelectedTextId(null);
         setMobileToolsOpen(false);
         setMobileToolsExpanded(false);
+        closeExportPreview();
         setExportFormat("jpeg");
 
         window.requestAnimationFrame(() => {
@@ -729,6 +878,7 @@ function EikasiaEditorShell() {
     },
     [
       hasUnexportedChanges,
+      closeExportPreview,
       project.imageSrc,
       setExportFormat,
       setImage,
@@ -754,12 +904,13 @@ function EikasiaEditorShell() {
     objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     objectUrlsRef.current = [];
     resetProject();
+    closeExportPreview();
     setSelectedTextId(null);
     setMobileToolsOpen(false);
     setMobileToolsExpanded(false);
     setHasUnexportedChanges(false);
     setNotice(null);
-  }, [exporting, hasUnexportedChanges, importing, project.imageSrc, resetProject, setSelectedTextId]);
+  }, [closeExportPreview, exporting, hasUnexportedChanges, importing, project.imageSrc, resetProject, setSelectedTextId]);
 
   const handleExport = React.useCallback(async () => {
     if (!project.imageSrc) {
@@ -790,9 +941,34 @@ function EikasiaEditorShell() {
           ? ` · Q${result.quality} to stay within the upload limit`
           : "";
 
-      setNotice(
-        `${getExportTarget(result.target).label} ready · ${result.width}×${result.height} · ${megabytes} MB${qualityNote}`,
+      if (exportPreviewUrlRef.current) {
+        URL.revokeObjectURL(exportPreviewUrlRef.current);
+      }
+
+      const previewUrl = URL.createObjectURL(result.blob);
+      const file = new File([result.blob], result.filename, {
+        type: result.blob.type,
+        lastModified: Date.now(),
+      });
+      let canNativeShare = false;
+
+      try {
+        canNativeShare =
+          typeof navigator.share === "function" &&
+          typeof navigator.canShare === "function" &&
+          navigator.canShare({ files: [file] });
+      } catch {
+        canNativeShare = false;
+      }
+
+      exportPreviewUrlRef.current = previewUrl;
+      setPreparedExport({ ...result, previewUrl, file, canNativeShare });
+      setExportActionMessage(
+        qualityNote
+          ? `${getExportTarget(result.target).label} rendered at ${megabytes} MB${qualityNote}.`
+          : null,
       );
+      setNotice(null);
       setHasUnexportedChanges(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Export failed";
@@ -801,6 +977,40 @@ function EikasiaEditorShell() {
       setExporting(false);
     }
   }, [exportFormat, exportQuality, exportTarget, project, setSelectedTextId]);
+
+  const handleDownloadPreparedExport = React.useCallback(() => {
+    if (!preparedExport) {
+      return;
+    }
+
+    downloadImageBlob(preparedExport.blob, preparedExport.filename);
+    setExportActionMessage(
+      "Download started. Check your browser Downloads if it does not appear in Photos.",
+    );
+  }, [preparedExport]);
+
+  const handleSharePreparedExport = React.useCallback(async () => {
+    if (!preparedExport?.canNativeShare) {
+      handleDownloadPreparedExport();
+      return;
+    }
+
+    try {
+      await navigator.share({
+        files: [preparedExport.file],
+        title: "Eikasia photo",
+      });
+      setExportActionMessage("The image was handed to your selected destination.");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+
+      setExportActionMessage(
+        "The share sheet could not open. Use Download below instead.",
+      );
+    }
+  }, [handleDownloadPreparedExport, preparedExport]);
 
   return (
     <div className="app-shell relative min-h-screen min-h-[100dvh] overflow-hidden bg-[var(--background)] text-[var(--text-primary)]">
@@ -823,6 +1033,16 @@ function EikasiaEditorShell() {
           event.currentTarget.value = "";
         }}
       />
+
+      {preparedExport ? (
+        <ExportResultSheet
+          result={preparedExport}
+          message={exportActionMessage}
+          onClose={closeExportPreview}
+          onDownload={handleDownloadPreparedExport}
+          onShare={() => void handleSharePreparedExport()}
+        />
+      ) : null}
 
       <div className="relative flex h-[100dvh] flex-col">
         <header className="relative z-40 shrink-0 border-b border-[var(--border)] bg-[#0a0a0a] pt-[env(safe-area-inset-top)] md:hidden">
@@ -1123,7 +1343,7 @@ function EikasiaEditorShell() {
                   "mobile-tool-drawer absolute inset-x-0 bottom-0 z-30 flex max-h-[calc(100%-0.5rem)] flex-col overflow-hidden rounded-t-2xl border-x border-t border-[var(--border)] bg-[#111114] shadow-[0_-22px_70px_rgba(0,0,0,0.68)] animate-[mobile-drawer-in_180ms_ease-out] md:hidden",
                   mobileToolsExpanded
                     ? "h-[min(68dvh,620px)] max-h-[calc(100%-5rem)]"
-                    : "h-[clamp(210px,42dvh,360px)] max-h-[calc(100%-9rem)]",
+                    : "h-[clamp(200px,34dvh,300px)] max-h-[calc(100%-9rem)]",
                 )}
               >
               <div className="shrink-0 border-b border-[var(--border)] px-3 pb-2">

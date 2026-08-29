@@ -421,6 +421,8 @@ export interface ExportImageResult {
   bytes: number;
   quality: number;
   target: ExportTarget;
+  blob: Blob;
+  filename: string;
 }
 
 export async function exportProjectImage(
@@ -517,7 +519,9 @@ export async function exportProjectImage(
     }
     ctx.restore();
 
-    // ── Export to blob and trigger download ─────────────────────────────────
+    // Encode once, then let the UI decide whether to preview, share, or
+    // download. Native mobile sharing requires a fresh user activation, so it
+    // cannot be invoked reliably at the end of this asynchronous render.
     const mimeType = format === "png" ? "image/png" : "image/jpeg";
     const exportQuality = format === "jpeg" ? quality / 100 : 1;
 
@@ -529,10 +533,8 @@ export async function exportProjectImage(
     );
     const extension = format === "png" ? "png" : "jpg";
     const targetSlug = target === "original" ? "original" : target;
-    triggerDownload(
-      encoded.blob,
-      `eikasia-${targetSlug}-${width}x${height}-${Date.now()}.${extension}`,
-    );
+    const filename =
+      `eikasia-${targetSlug}-${width}x${height}-${Date.now()}.${extension}`;
 
     return {
       width,
@@ -540,6 +542,8 @@ export async function exportProjectImage(
       bytes: encoded.blob.size,
       quality: Math.round(encoded.quality * 100),
       target,
+      blob: encoded.blob,
+      filename,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -1778,7 +1782,7 @@ function blendModeToComposite(mode: string): GlobalCompositeOperation {
 // Download Trigger
 // ────────────────────────────────────────────────────────────────────────────
 
-function triggerDownload(blob: Blob, filename: string): void {
+export function downloadImageBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
 
   const link = document.createElement("a");

@@ -104,6 +104,7 @@ type PreviewWorkerResponse =
 const CONTAINER_SIZE_JITTER_TOLERANCE_PX = 2;
 const CONTAINER_SIZE_SETTLE_MS = 80;
 const PREVIEW_FULL_SETTLE_MS = 140;
+const PREVIEW_FALLBACK_FULL_SETTLE_MS = 260;
 
 export interface CanvasStageHandle {
   getElement: () => HTMLDivElement | null;
@@ -1482,7 +1483,7 @@ export const CanvasStage = React.forwardRef<
     const useMobileProfile =
       isCoarsePointer && (isSmallViewport || isLowPowerDevice);
     const devicePixelRatio = window.devicePixelRatio || 1;
-    const allowFullRender = !useMobileProfile && !isLowPowerDevice;
+    const allowFullRender = true;
     let cancelled = false;
     let fallbackFrameId = 0;
     let worker: Worker | null = null;
@@ -1517,7 +1518,16 @@ export const CanvasStage = React.forwardRef<
         state.adjustments.grainAmount +
         (grainOverlay?.intensity ?? 0) * (grainOverlay?.opacity ?? 0.14);
       const isHeavyGrain = grainLoadScore > 24;
-      const fullDpr = Math.min(devicePixelRatio, isHeavyGrain ? 1.1 : 1.25);
+      const fullDprLimit = useMobileProfile
+        ? isHeavyGrain
+          ? 1.3
+          : isLowPowerDevice
+            ? 1.4
+            : 1.6
+        : isHeavyGrain
+          ? 1.3
+          : 1.5;
+      const fullDpr = Math.min(devicePixelRatio, fullDprLimit);
       const fastDpr = useMobileProfile
         ? Math.min(devicePixelRatio, 1)
         : Math.min(fullDpr, isHeavyGrain ? 0.7 : 0.85);
@@ -1528,7 +1538,13 @@ export const CanvasStage = React.forwardRef<
         : isHeavyGrain
           ? 560_000
           : 720_000;
-      const fullBudget = isHeavyGrain ? 900_000 : 1_200_000;
+      const fullBudget = useMobileProfile
+        ? isHeavyGrain
+          ? 900_000
+          : 1_400_000
+        : isHeavyGrain
+          ? 1_100_000
+          : 1_800_000;
 
       return {
         fast: getRenderSize(fastDpr, fastBudget),
@@ -1672,6 +1688,25 @@ export const CanvasStage = React.forwardRef<
 
       if (usingFallback) {
         queueFallback(fastJob);
+
+        if (allowFullRender) {
+          fullRenderTimeout = window.setTimeout(() => {
+            fullRenderTimeout = 0;
+
+            if (cancelled || revision !== currentRevision) {
+              return;
+            }
+
+            queueFallback({
+              revision,
+              quality: "full",
+              ...sizes.full,
+              state,
+              crop: previewCrop,
+            });
+          }, PREVIEW_FALLBACK_FULL_SETTLE_MS);
+        }
+
         return;
       }
 
@@ -2822,7 +2857,7 @@ export const CanvasStage = React.forwardRef<
               : undefined
           }
         >
-          <div className="absolute left-3 top-3 z-20 flex select-none items-center gap-2 sm:left-6 sm:top-6 sm:gap-3">
+          <div className="absolute left-6 top-6 z-20 hidden select-none items-center gap-3 sm:flex">
             <div className="max-w-[56vw] border border-[var(--border)] bg-[rgba(10,10,10,0.82)] px-3 py-2 sm:max-w-[320px]">
               <p className="truncate font-mono text-[11px] uppercase tracking-[0.2em] text-[var(--accent)] sm:tracking-[0.24em]">
                 {project.imageName ?? "Untitled Frame"}
