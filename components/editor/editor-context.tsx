@@ -3,14 +3,13 @@
 import * as React from "react";
 
 import {
-  createRecommendedGrainLayer,
   DEFAULT_ADJUSTMENTS,
   DEFAULT_CROP,
   MAX_HISTORY,
   createInitialProjectState,
   getLookDefinition,
   getPerspectiveForPreset,
-  normalizeLookAdjustments,
+  resolveLookGrainLayer,
 } from "@/components/editor/constants";
 import type {
   AcrosChannel,
@@ -22,29 +21,33 @@ import type {
   ProjectState,
   TextLayer,
 } from "@/components/editor/types";
+import type { ExportTarget } from "@/lib/social-export";
 
 interface HistoryState {
   past: ProjectState[];
   present: ProjectState;
   future: ProjectState[];
+  lastMutation: { key: string; at: number } | null;
 }
+
+type MutationMeta = { key: string; at: number };
 
 type ProjectAction =
   | { type: "reset-project" }
   | { type: "set-image"; imageSrc: string | null; imageName: string | null }
   | { type: "set-image-dimensions"; width: number; height: number }
   | { type: "set-look"; lookId: string | null }
-  | { type: "set-filter-intensity"; value: number }
+  | { type: "set-filter-intensity"; value: number; mutation: MutationMeta }
   | { type: "set-acros-channel"; value: AcrosChannel }
-  | { type: "set-adjustment"; key: AdjustmentKey; value: number }
+  | { type: "set-adjustment"; key: AdjustmentKey; value: number; mutation: MutationMeta }
   | { type: "reset-adjustment"; key: AdjustmentKey }
   | { type: "add-text-layer"; layer: TextLayer }
-  | { type: "update-text-layer"; id: string; updates: Partial<TextLayer> }
+  | { type: "update-text-layer"; id: string; updates: Partial<TextLayer>; mutation: MutationMeta }
   | { type: "remove-text-layer"; id: string }
   | { type: "set-text-layers"; layers: TextLayer[] }
-  | { type: "upsert-overlay"; layer: OverlayLayer; replaceByType?: boolean }
+  | { type: "upsert-overlay"; layer: OverlayLayer; replaceByType?: boolean; mutation: MutationMeta }
   | { type: "remove-overlay"; id?: string; overlayType?: OverlayType }
-  | { type: "set-crop-rotation"; value: number }
+  | { type: "set-crop-rotation"; value: number; mutation: MutationMeta }
   | { type: "toggle-flip"; axis: "x" | "y" }
   | { type: "set-crop-preset"; presetId: string }
   | { type: "set-crop-perspective"; value: ProjectState["crop"]["perspective"] }
@@ -59,12 +62,14 @@ interface EditorContextValue {
   selectedTextId: string | null;
   exportFormat: "png" | "jpeg";
   exportQuality: number;
+  exportTarget: ExportTarget;
   canUndo: boolean;
   canRedo: boolean;
   setActiveTab: (tab: EditorTabId) => void;
   setSelectedTextId: (id: string | null) => void;
   setExportFormat: (format: "png" | "jpeg") => void;
   setExportQuality: (quality: number) => void;
+  setExportTarget: (target: ExportTarget) => void;
   setImage: (imageSrc: string | null, imageName: string | null) => void;
   setImageDimensions: (width: number, height: number) => void;
   resetProject: () => void;
@@ -94,11 +99,25 @@ interface EditorContextValue {
 
 const EditorContext = React.createContext<EditorContextValue | null>(null);
 
-function pushHistory(history: HistoryState, nextPresent: ProjectState): HistoryState {
+const MUTATION_COALESCE_WINDOW_MS = 700;
+
+function pushHistory(
+  history: HistoryState,
+  nextPresent: ProjectState,
+  mutation: MutationMeta | null = null,
+): HistoryState {
+  const coalesce =
+    mutation !== null &&
+    history.lastMutation?.key === mutation.key &&
+    mutation.at - history.lastMutation.at <= MUTATION_COALESCE_WINDOW_MS;
+
   return {
-    past: [...history.past, history.present].slice(-MAX_HISTORY),
+    past: coalesce
+      ? history.past
+      : [...history.past, history.present].slice(-MAX_HISTORY),
     present: nextPresent,
     future: [],
+    lastMutation: mutation,
   };
 }
 
@@ -119,24 +138,40 @@ function areCropPerspectivesEqual(
 }
 
 function projectReducer(history: HistoryState, action: ProjectAction): HistoryState {
-  const applyChange = (recipe: (project: ProjectState) => ProjectState) =>
-    pushHistory(history, recipe(history.present));
+  const applyChange = (
+    recipe: (project: ProjectState) => ProjectState,
+    mutation: MutationMeta | null = null,
+  ) => pushHistory(history, recipe(history.present), mutation);
 
   switch (action.type) {
     case "reset-project":
-      return pushHistory(history, createInitialProjectState());
+      return {
+        past: [],
+        present: createInitialProjectState(),
+        future: [],
+        lastMutation: null,
+      };
     case "set-image":
-      return pushHistory(history, {
-        ...createInitialProjectState(),
-        imageSrc: action.imageSrc,
-        imageName: action.imageName,
-      });
+      return {
+        past: [],
+        present: {
+          ...createInitialProjectState(),
+          imageSrc: action.imageSrc,
+          imageName: action.imageName,
+        },
+        future: [],
+        lastMutation: null,
+      };
     case "set-image-dimensions":
-      return applyChange((project) => ({
-        ...project,
-        imageWidth: action.width,
-        imageHeight: action.height,
-      }));
+      return {
+        ...history,
+        present: {
+          ...history.present,
+          imageWidth: action.width,
+          imageHeight: action.height,
+        },
+        lastMutation: null,
+      };
     case "set-look":
       if (history.present.activeLookId === action.lookId) {
         return history;
@@ -144,29 +179,23 @@ function projectReducer(history: HistoryState, action: ProjectAction): HistorySt
 
       return applyChange((project) => {
         const look = getLookDefinition(action.lookId);
-        const recommendedGrainLayer = look
-          ? createRecommendedGrainLayer(
-              look.preset.grain,
-              project.overlayLayers.find((layer) => layer.type === "grain") ?? null,
-            )
-          : null;
+        const existingGrainLayer =
+          project.overlayLayers.find((layer) => layer.type === "grain") ?? null;
+        const nextGrainLayer = resolveLookGrainLayer(
+          look,
+          existingGrainLayer,
+        );
 
         return {
           ...project,
           activeLookId: action.lookId,
-          filterIntensity: look?.preset.filterIntensity ?? project.filterIntensity,
-          adjustments: look
-            ? {
-                ...DEFAULT_ADJUSTMENTS,
-                ...normalizeLookAdjustments(look.preset.adjustments),
-              }
-            : project.adjustments,
-          overlayLayers: recommendedGrainLayer
+          filterIntensity: look?.preset.filterIntensity ?? 0,
+          overlayLayers: nextGrainLayer
             ? [
                 ...project.overlayLayers.filter((layer) => layer.type !== "grain"),
-                recommendedGrainLayer,
+                nextGrainLayer,
               ]
-            : project.overlayLayers,
+            : project.overlayLayers.filter((layer) => layer.type !== "grain"),
         };
       });
     case "set-filter-intensity":
@@ -174,10 +203,13 @@ function projectReducer(history: HistoryState, action: ProjectAction): HistorySt
         return history;
       }
 
-      return applyChange((project) => ({
-        ...project,
-        filterIntensity: action.value,
-      }));
+      return applyChange(
+        (project) => ({
+          ...project,
+          filterIntensity: action.value,
+        }),
+        action.mutation,
+      );
     case "set-acros-channel":
       if (history.present.acrosChannel === action.value) {
         return history;
@@ -192,19 +224,22 @@ function projectReducer(history: HistoryState, action: ProjectAction): HistorySt
         return history;
       }
 
-      return applyChange((project) => ({
-        ...project,
-        adjustments: {
-          ...project.adjustments,
-          [action.key]: action.value,
-        },
-      }));
+      return applyChange(
+        (project) => ({
+          ...project,
+          adjustments: {
+            ...project.adjustments,
+            [action.key]: action.value,
+          },
+        }),
+        action.mutation,
+      );
     case "reset-adjustment":
       {
-        const activeLook = getLookDefinition(history.present.activeLookId);
-        const nextValue =
-          activeLook?.preset.adjustments[action.key] ??
-          DEFAULT_ADJUSTMENTS[action.key];
+        // Manual controls are offsets around neutral. The active look is mixed
+        // later by resolveEffectiveAdjustments, so using its value here would
+        // apply the look twice after pressing reset.
+        const nextValue = DEFAULT_ADJUSTMENTS[action.key];
 
         if (history.present.adjustments[action.key] === nextValue) {
           return history;
@@ -225,12 +260,15 @@ function projectReducer(history: HistoryState, action: ProjectAction): HistorySt
         textLayers: [...project.textLayers, action.layer],
       }));
     case "update-text-layer":
-      return applyChange((project) => ({
-        ...project,
-        textLayers: project.textLayers.map((layer) =>
-          layer.id === action.id ? { ...layer, ...action.updates } : layer,
-        ),
-      }));
+      return applyChange(
+        (project) => ({
+          ...project,
+          textLayers: project.textLayers.map((layer) =>
+            layer.id === action.id ? { ...layer, ...action.updates } : layer,
+          ),
+        }),
+        action.mutation,
+      );
     case "remove-text-layer":
       return applyChange((project) => ({
         ...project,
@@ -242,40 +280,54 @@ function projectReducer(history: HistoryState, action: ProjectAction): HistorySt
         textLayers: action.layers,
       }));
     case "upsert-overlay":
+      return applyChange(
+        (project) => {
+          const baseLayers = action.replaceByType
+            ? project.overlayLayers.filter((layer) => layer.type !== action.layer.type)
+            : project.overlayLayers.filter((layer) => layer.id !== action.layer.id);
+
+          return {
+            ...project,
+            overlayLayers: [...baseLayers, action.layer],
+          };
+        },
+        action.mutation,
+      );
+    case "remove-overlay":
       return applyChange((project) => {
-        const baseLayers = action.replaceByType
-          ? project.overlayLayers.filter((layer) => layer.type !== action.layer.type)
-          : project.overlayLayers.filter((layer) => layer.id !== action.layer.id);
+        const removesLayer = (layer: ProjectState["overlayLayers"][number]) =>
+          Boolean(
+            (action.id && layer.id === action.id) ||
+              (action.overlayType && layer.type === action.overlayType),
+          );
+        const removesGrain =
+          action.overlayType === "grain" ||
+          project.overlayLayers.some(
+            (layer) => layer.type === "grain" && removesLayer(layer),
+          );
 
         return {
           ...project,
-          overlayLayers: [...baseLayers, action.layer],
+          adjustments: removesGrain
+            ? { ...project.adjustments, grainAmount: 0 }
+            : project.adjustments,
+          overlayLayers: project.overlayLayers.filter(
+            (layer) => !removesLayer(layer),
+          ),
         };
       });
-    case "remove-overlay":
-      return applyChange((project) => ({
-        ...project,
-        overlayLayers: project.overlayLayers.filter((layer) => {
-          if (action.id && layer.id === action.id) {
-            return false;
-          }
-
-          if (action.overlayType && layer.type === action.overlayType) {
-            return false;
-          }
-
-          return true;
-        }),
-      }));
     case "set-crop-rotation":
       if (history.present.crop.rotation === action.value) {
         return history;
       }
 
-      return applyChange((project) => ({
-        ...project,
-        crop: { ...project.crop, rotation: action.value },
-      }));
+      return applyChange(
+        (project) => ({
+          ...project,
+          crop: { ...project.crop, rotation: action.value },
+        }),
+        action.mutation,
+      );
     case "toggle-flip":
       return applyChange((project) => ({
         ...project,
@@ -362,6 +414,7 @@ function projectReducer(history: HistoryState, action: ProjectAction): HistorySt
         past: history.past.slice(0, -1),
         present: history.past[history.past.length - 1],
         future: [history.present, ...history.future],
+        lastMutation: null,
       };
     case "redo":
       if (!history.future.length) {
@@ -372,6 +425,7 @@ function projectReducer(history: HistoryState, action: ProjectAction): HistorySt
         past: [...history.past, history.present].slice(-MAX_HISTORY),
         present: history.future[0],
         future: history.future.slice(1),
+        lastMutation: null,
       };
     default:
       return history;
@@ -383,20 +437,102 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
     past: [],
     present: createInitialProjectState(),
     future: [],
+    lastMutation: null,
   });
   const [activeTab, setActiveTab] = React.useState<EditorTabId>("filters");
-  const [selectedTextId, setSelectedTextId] = React.useState<string | null>(null);
+  const [requestedSelectedTextId, setSelectedTextId] =
+    React.useState<string | null>(null);
   const [exportFormat, setExportFormat] = React.useState<"png" | "jpeg">("jpeg");
-  const [exportQuality, setExportQuality] = React.useState(88);
+  const [exportQuality, setExportQuality] = React.useState(92);
+  const [exportTarget, setExportTarget] =
+    React.useState<ExportTarget>("instagram-feed");
+  const selectedTextId =
+    requestedSelectedTextId &&
+    history.present.textLayers.some(
+      (layer) => layer.id === requestedSelectedTextId,
+    )
+      ? requestedSelectedTextId
+      : null;
 
-  React.useEffect(() => {
-    if (
-      selectedTextId &&
-      !history.present.textLayers.some((layer) => layer.id === selectedTextId)
-    ) {
-      setSelectedTextId(null);
-    }
-  }, [history.present.textLayers, selectedTextId]);
+  const actions = React.useMemo(
+    () => ({
+      setActiveTab,
+      setSelectedTextId,
+      setExportFormat,
+      setExportQuality,
+      setExportTarget,
+      setImage: (imageSrc: string | null, imageName: string | null) =>
+        dispatch({ type: "set-image", imageSrc, imageName }),
+      setImageDimensions: (width: number, height: number) =>
+        dispatch({ type: "set-image-dimensions", width, height }),
+      resetProject: () => dispatch({ type: "reset-project" }),
+      setLook: (lookId: string | null) =>
+        dispatch({ type: "set-look", lookId }),
+      setFilterIntensity: (value: number) =>
+        dispatch({
+          type: "set-filter-intensity",
+          value,
+          mutation: { key: "filter-intensity", at: Date.now() },
+        }),
+      setAcrosChannel: (value: ProjectState["acrosChannel"]) =>
+        dispatch({ type: "set-acros-channel", value }),
+      setAdjustment: (key: AdjustmentKey, value: number) =>
+        dispatch({
+          type: "set-adjustment",
+          key,
+          value,
+          mutation: { key: `adjustment:${key}`, at: Date.now() },
+        }),
+      resetAdjustment: (key: AdjustmentKey) =>
+        dispatch({ type: "reset-adjustment", key }),
+      addTextLayer: (layer: TextLayer) =>
+        dispatch({ type: "add-text-layer", layer }),
+      updateTextLayer: (id: string, updates: Partial<TextLayer>) =>
+        dispatch({
+          type: "update-text-layer",
+          id,
+          updates,
+          mutation: { key: `text:${id}`, at: Date.now() },
+        }),
+      removeTextLayer: (id: string) =>
+        dispatch({ type: "remove-text-layer", id }),
+      setTextLayers: (layers: TextLayer[]) =>
+        dispatch({ type: "set-text-layers", layers }),
+      upsertOverlay: (
+        layer: OverlayLayer,
+        replaceByType: boolean = true,
+      ) =>
+        dispatch({
+          type: "upsert-overlay",
+          layer,
+          replaceByType,
+          mutation: { key: `overlay:${layer.type}:${layer.id}`, at: Date.now() },
+        }),
+      removeOverlay: (id?: string, overlayType?: OverlayLayer["type"]) =>
+        dispatch({ type: "remove-overlay", id, overlayType }),
+      setCropRotation: (value: number) =>
+        dispatch({
+          type: "set-crop-rotation",
+          value,
+          mutation: { key: "crop:rotation", at: Date.now() },
+        }),
+      toggleFlip: (axis: "x" | "y") =>
+        dispatch({ type: "toggle-flip", axis }),
+      setCropPreset: (presetId: string) =>
+        dispatch({ type: "set-crop-preset", presetId }),
+      setCropPerspective: (value: ProjectState["crop"]["perspective"]) =>
+        dispatch({ type: "set-crop-perspective", value }),
+      setCropPoint: (
+        point: keyof ProjectState["crop"]["perspective"],
+        value: CropPoint,
+      ) =>
+        dispatch({ type: "set-crop-point", point, value }),
+      resetCrop: () => dispatch({ type: "reset-crop" }),
+      undo: () => dispatch({ type: "undo" }),
+      redo: () => dispatch({ type: "redo" }),
+    }),
+    [],
+  );
 
   const value = React.useMemo<EditorContextValue>(
     () => ({
@@ -405,52 +541,17 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       selectedTextId,
       exportFormat,
       exportQuality,
+      exportTarget,
       canUndo: history.past.length > 0,
       canRedo: history.future.length > 0,
-      setActiveTab,
-      setSelectedTextId,
-      setExportFormat,
-      setExportQuality,
-      setImage: (imageSrc, imageName) =>
-        dispatch({ type: "set-image", imageSrc, imageName }),
-      setImageDimensions: (width, height) =>
-        dispatch({ type: "set-image-dimensions", width, height }),
-      resetProject: () => dispatch({ type: "reset-project" }),
-      setLook: (lookId) => dispatch({ type: "set-look", lookId }),
-      setFilterIntensity: (value) =>
-        dispatch({ type: "set-filter-intensity", value }),
-      setAcrosChannel: (value) =>
-        dispatch({ type: "set-acros-channel", value }),
-      setAdjustment: (key, value) =>
-        dispatch({ type: "set-adjustment", key, value }),
-      resetAdjustment: (key) =>
-        dispatch({ type: "reset-adjustment", key }),
-      addTextLayer: (layer) => dispatch({ type: "add-text-layer", layer }),
-      updateTextLayer: (id, updates) =>
-        dispatch({ type: "update-text-layer", id, updates }),
-      removeTextLayer: (id) => dispatch({ type: "remove-text-layer", id }),
-      setTextLayers: (layers) => dispatch({ type: "set-text-layers", layers }),
-      upsertOverlay: (layer, replaceByType = true) =>
-        dispatch({ type: "upsert-overlay", layer, replaceByType }),
-      removeOverlay: (id, overlayType) =>
-        dispatch({ type: "remove-overlay", id, overlayType }),
-      setCropRotation: (value) =>
-        dispatch({ type: "set-crop-rotation", value }),
-      toggleFlip: (axis) => dispatch({ type: "toggle-flip", axis }),
-      setCropPreset: (presetId) =>
-        dispatch({ type: "set-crop-preset", presetId }),
-      setCropPerspective: (value) =>
-        dispatch({ type: "set-crop-perspective", value }),
-      setCropPoint: (point, value) =>
-        dispatch({ type: "set-crop-point", point, value }),
-      resetCrop: () => dispatch({ type: "reset-crop" }),
-      undo: () => dispatch({ type: "undo" }),
-      redo: () => dispatch({ type: "redo" }),
+      ...actions,
     }),
     [
       activeTab,
+      actions,
       exportFormat,
       exportQuality,
+      exportTarget,
       history,
       selectedTextId,
     ],

@@ -13,9 +13,16 @@ function Select({
 }
 
 function SelectValue({
+  className,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Value>) {
-  return <SelectPrimitive.Value data-slot="select-value" {...props} />;
+  return (
+    <SelectPrimitive.Value
+      data-slot="select-value"
+      className={cn("min-w-0 flex-1 truncate", className)}
+      {...props}
+    />
+  );
 }
 
 function SelectTrigger({
@@ -27,7 +34,7 @@ function SelectTrigger({
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
       className={cn(
-        "flex h-11 w-full items-center justify-between gap-3 border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-left text-[11px] uppercase tracking-[0.24em] text-[var(--text-primary)] transition-colors duration-150 focus:outline-none focus:ring-1 focus:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-45 rounded-none",
+        "flex h-11 w-full min-w-0 items-center justify-between gap-2 overflow-hidden border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-left text-[10px] uppercase tracking-[0.14em] text-[var(--text-primary)] transition-colors duration-150 focus:outline-none focus:ring-1 focus:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-45 rounded-none sm:text-[11px] sm:tracking-[0.18em]",
         className,
       )}
       {...props}
@@ -74,7 +81,7 @@ function SelectItem({
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "relative flex cursor-default select-none items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-[0.22em] outline-none transition-colors focus:bg-[rgba(245,158,11,0.14)] focus:text-white data-[disabled]:pointer-events-none data-[disabled]:opacity-45",
+        "relative flex min-w-0 cursor-default select-none items-center gap-2 py-2 pl-3 pr-9 text-[10px] uppercase leading-4 tracking-[0.14em] outline-none transition-colors focus:bg-[rgba(245,158,11,0.14)] focus:text-white data-[disabled]:pointer-events-none data-[disabled]:opacity-45 sm:text-[11px] sm:tracking-[0.18em]",
         className,
       )}
       {...props}

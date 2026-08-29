@@ -1,16 +1,28 @@
-import type { ProjectState, TextLayer } from "@/components/editor/types";
+import type { Adjustments, ProjectState, TextLayer } from "@/components/editor/types";
 import type { LookDefinition } from "@/components/editor/types";
-import { getLookDefinition } from "@/components/editor/constants";
+import {
+  ADJUSTMENT_GROUPS,
+  AUTO_GRAIN_LAYER_ID,
+  DEFAULT_ADJUSTMENTS,
+  getLookDefinition,
+} from "@/components/editor/constants";
 import {
   getFabricTextboxOptions,
-  createScaledTextShadow,
+  getScaledTextShadowOptions,
 } from "@/lib/text-style";
-import { StaticCanvas, Textbox } from "fabric";
+import {
+  getCropGeometry,
+  getCroppedSourceDimensions,
+  getExportTarget,
+  interpolateCropPoint,
+  mapSourcePointToCrop,
+  resolveExportDimensions,
+  type ExportTarget,
+} from "@/lib/social-export";
 
-const EXPORT_SCALE = 1;
 type RasterContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 type RasterSource = ImageBitmap | HTMLImageElement;
-type RasterProjectState = Pick<
+export type RasterProjectState = Pick<
   ProjectState,
   "activeLookId" | "filterIntensity" | "acrosChannel" | "adjustments" | "overlayLayers"
 >;
@@ -25,7 +37,8 @@ type DrawSourceImage = (
 // Utilities
 // ────────────────────────────────────────────────────────────────────────────
 
-const clampByte = (v: number): number => Math.max(0, Math.min(255, Math.round(v)));
+const clampByte = (v: number): number =>
+  Number.isFinite(v) ? Math.max(0, Math.min(255, Math.round(v))) : 0;
 const clamp = (v: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, v));
 
@@ -33,15 +46,118 @@ const GRAIN_CACHE_LIMIT = 12;
 const GRAIN_CACHE_MAX_PIXELS = 1_600_000;
 const GRAIN_INTENSITY_BUCKET_STEP = 2;
 const GRAIN_SIZE_BUCKET_STEP = 2;
+const LOOK_CACHE_LIMIT_PER_SOURCE = 4;
+const CROP_CACHE_LIMIT_PER_SOURCE = 4;
 const CHROMA_STABILITY_MAX_DEVIATION = 172;
+export const RENDERED_BORDER_PRESET_IDS = [
+  "kodak-border",
+  "negative-strip",
+  "polaroid-border",
+  "super8-border",
+  "instax-border",
+] as const;
 const grainTextureCache = new Map<string, OffscreenCanvas | HTMLCanvasElement>();
+const lookCanvasCache = new WeakMap<
+  RasterSource,
+  Map<string, OffscreenCanvas | HTMLCanvasElement>
+>();
+const cropCanvasCache = new WeakMap<
+  RasterSource,
+  Map<string, OffscreenCanvas | HTMLCanvasElement>
+>();
 
-function toneMapFilmic(value: number) {
-  const mapped =
-    (value * (2.51 * value + 0.03)) /
-    (value * (2.43 * value + 0.59) + 0.14);
+export function packGamutMappedRgb(r: number, g: number, b: number): number {
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) {
+    return 0;
+  }
 
-  return clamp(mapped, 0, 1);
+  const luminance = 0.213 * r + 0.715 * g + 0.072 * b;
+  const targetLuminance = clamp(luminance, 0, 255);
+  const redDelta = r - luminance;
+  const greenDelta = g - luminance;
+  const blueDelta = b - luminance;
+  let chromaScale = 1;
+
+  if (redDelta > 0) {
+    chromaScale = Math.min(chromaScale, (255 - targetLuminance) / redDelta);
+  } else if (redDelta < 0) {
+    chromaScale = Math.min(chromaScale, -targetLuminance / redDelta);
+  }
+
+  if (greenDelta > 0) {
+    chromaScale = Math.min(chromaScale, (255 - targetLuminance) / greenDelta);
+  } else if (greenDelta < 0) {
+    chromaScale = Math.min(chromaScale, -targetLuminance / greenDelta);
+  }
+
+  if (blueDelta > 0) {
+    chromaScale = Math.min(chromaScale, (255 - targetLuminance) / blueDelta);
+  } else if (blueDelta < 0) {
+    chromaScale = Math.min(chromaScale, -targetLuminance / blueDelta);
+  }
+
+  const mappedR = clampByte(targetLuminance + redDelta * chromaScale);
+  const mappedG = clampByte(targetLuminance + greenDelta * chromaScale);
+  const mappedB = clampByte(targetLuminance + blueDelta * chromaScale);
+
+  return (mappedR << 16) | (mappedG << 8) | mappedB;
+}
+
+export function toneMapFilmic(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  // Compress highlights with a continuous shoulder. The previous curve was
+  // only applied above 1.0 even though it maps 1.0 to ~0.80, so a channel
+  // crossing the boundary suddenly became darker and created cyan/magenta
+  // posterization in bright areas.
+  const shoulderStart = 0.92;
+
+  if (value <= shoulderStart) {
+    return value;
+  }
+
+  const shoulderRange = 1 - shoulderStart;
+  const compressed =
+    shoulderStart +
+    shoulderRange *
+      (1 - Math.exp(-(value - shoulderStart) / shoulderRange));
+
+  return clamp(compressed, 0, 1);
+}
+
+function smoothstep(edge0: number, edge1: number, value: number) {
+  const normalized = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return normalized * normalized * (3 - 2 * normalized);
+}
+
+export function mapToneValue(value: number, adj: Adjustments) {
+  const exposureScale = Math.pow(2, (adj.exposure / 100) * 1.2);
+  let mapped = Math.max(0, value) * exposureScale;
+  const tonalReference = clamp(mapped, 0, 1);
+
+  // Use overlapping, smooth tonal masks. The old Whites/Blacks formulas
+  // moved even their strongest pixels by only ~4.5%, which made both controls
+  // appear broken. These ranges remain localized but are deliberately visible.
+  const highlightMask = smoothstep(0.35, 0.95, tonalReference);
+  const shadowMask = 1 - smoothstep(0.05, 0.65, tonalReference);
+  const whiteMask = smoothstep(0.68, 0.98, tonalReference);
+  const blackMask = 1 - smoothstep(0.02, 0.38, tonalReference);
+
+  mapped += (adj.highlights / 100) * 0.22 * highlightMask;
+  mapped += (adj.shadows / 100) * 0.22 * shadowMask;
+  mapped += (adj.whites / 100) * 0.18 * whiteMask;
+  mapped += (adj.blacks / 100) * 0.16 * blackMask;
+
+  if (adj.fade > 0) {
+    const lift = (adj.fade / 100) * 0.14;
+    mapped = mapped * (1 - lift) + lift;
+  }
+
+  return mapped > 0.92
+    ? toneMapFilmic(mapped)
+    : clamp(mapped, 0, 1);
 }
 
 function createWorkingCanvas(width: number, height: number) {
@@ -58,13 +174,62 @@ function createWorkingCanvas(width: number, height: number) {
 function getWorkingContext(
   canvas: OffscreenCanvas | HTMLCanvasElement,
 ): RasterContext {
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const ctx = canvas.getContext("2d", {
+    willReadFrequently: true,
+    colorSpace: "srgb",
+  }) as RasterContext | null;
 
   if (!ctx) {
     throw new Error("Failed to get canvas context");
   }
 
   return ctx;
+}
+
+function getLookCanvas(
+  source: RasterSource,
+  look: LookDefinition,
+  acrosChannel: string,
+  width: number,
+  height: number,
+  drawSource: DrawSourceImage,
+  sourceVariantKey: string,
+) {
+  const sourceCache = lookCanvasCache.get(source) ?? new Map();
+  const cacheKey = `${sourceVariantKey}:${look.id}:${acrosChannel}:${width}x${height}`;
+  const cached = sourceCache.get(cacheKey);
+
+  if (cached) {
+    sourceCache.delete(cacheKey);
+    sourceCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  const canvas = createWorkingCanvas(width, height);
+  const context = getWorkingContext(canvas);
+  drawSource(context, source, width, height);
+  applyLookTransformToCanvas(
+    context,
+    look.cssFilter,
+    resolveMatrix(look, acrosChannel),
+    width,
+    height,
+  );
+
+  sourceCache.set(cacheKey, canvas);
+  lookCanvasCache.set(source, sourceCache);
+
+  while (sourceCache.size > LOOK_CACHE_LIMIT_PER_SOURCE) {
+    const oldestKey = sourceCache.keys().next().value;
+
+    if (oldestKey === undefined) {
+      break;
+    }
+
+    sourceCache.delete(oldestKey);
+  }
+
+  return canvas;
 }
 
 function getSourceSize(source: RasterSource) {
@@ -108,6 +273,7 @@ export function renderProjectRaster({
   width,
   height,
   drawSource,
+  sourceVariantKey = "full-source",
 }: {
   ctx: RasterContext;
   state: RasterProjectState;
@@ -115,6 +281,7 @@ export function renderProjectRaster({
   width: number;
   height: number;
   drawSource: DrawSourceImage;
+  sourceVariantKey?: string;
 }) {
   ctx.save();
   ctx.clearRect(0, 0, width, height);
@@ -134,12 +301,17 @@ export function renderProjectRaster({
       height,
       state.filterIntensity / 100,
       drawSource,
+      sourceVariantKey,
     );
   }
 
-  applyAdjustmentsToCanvas(ctx, state.adjustments, width, height);
+  const effectiveAdjustments = resolveEffectiveAdjustments(state);
+  applyAdjustmentsToCanvas(ctx, effectiveAdjustments, width, height);
 
-  const { effectLayers, borderLayers } = resolveOverlayLayers(state);
+  const { effectLayers, borderLayers } = resolveOverlayLayers({
+    ...state,
+    adjustments: effectiveAdjustments,
+  });
 
   effectLayers.forEach((layer) =>
     compositeOverlayLayer(ctx, layer, width, height),
@@ -149,6 +321,35 @@ export function renderProjectRaster({
   );
 
   ctx.restore();
+}
+
+export function resolveEffectiveAdjustments(
+  state: RasterProjectState,
+): Adjustments {
+  const look = getLookDefinition(state.activeLookId);
+  const lookMix = look ? clamp(state.filterIntensity / 100, 0, 1) : 0;
+  const resolved = { ...DEFAULT_ADJUSTMENTS };
+
+  for (const group of ADJUSTMENT_GROUPS) {
+    for (const control of group.controls) {
+      const key = control.key;
+      const neutralValue = DEFAULT_ADJUSTMENTS[key];
+      const manualDelta = state.adjustments[key] - neutralValue;
+      const lookValue =
+        key === "grainAmount" || key === "grainSize"
+          ? neutralValue
+          : (look?.preset.adjustments[key] ?? neutralValue);
+      const lookDelta = (lookValue - neutralValue) * lookMix;
+
+      resolved[key] = clamp(
+        neutralValue + lookDelta + manualDelta,
+        control.min,
+        control.max,
+      );
+    }
+  }
+
+  return resolved;
 }
 
 function resolveOverlayLayers(state: RasterProjectState) {
@@ -170,7 +371,11 @@ function resolveOverlayLayers(state: RasterProjectState) {
     ? {
         ...grainLayer,
         opacity: clamp(
-          (grainLayer.opacity ?? 0.14) + state.adjustments.grainAmount / 260,
+          (grainLayer.opacity ?? 0.14) *
+            (grainLayer.id === AUTO_GRAIN_LAYER_ID
+              ? clamp(state.filterIntensity / 100, 0, 1)
+              : 1) +
+            state.adjustments.grainAmount / 260,
           0,
           0.72,
         ),
@@ -179,7 +384,12 @@ function resolveOverlayLayers(state: RasterProjectState) {
           0,
           100,
         ),
-        size: grainLayer.size ?? state.adjustments.grainSize,
+        size: clamp(
+          (grainLayer.size ?? DEFAULT_ADJUSTMENTS.grainSize) +
+            (state.adjustments.grainSize - DEFAULT_ADJUSTMENTS.grainSize),
+          0,
+          100,
+        ),
       }
     : null;
 
@@ -198,33 +408,61 @@ function resolveOverlayLayers(state: RasterProjectState) {
 // Main Export Pipeline
 // ────────────────────────────────────────────────────────────────────────────
 
+export interface ExportImageOptions {
+  format?: "png" | "jpeg";
+  quality?: number;
+  target?: ExportTarget;
+  stageSize?: { width: number; height: number };
+}
+
+export interface ExportImageResult {
+  width: number;
+  height: number;
+  bytes: number;
+  quality: number;
+  target: ExportTarget;
+}
+
 export async function exportProjectImage(
   state: ProjectState,
-  format: "png" | "jpeg" = "jpeg",
-  quality: number = 92,
-  stageSize?: { width: number; height: number },
-): Promise<void> {
+  options: ExportImageOptions = {},
+): Promise<ExportImageResult> {
   const { imageSrc } = state;
+  const {
+    format = "jpeg",
+    quality = 92,
+    target = "instagram-feed",
+    stageSize,
+  } = options;
 
   if (!imageSrc) {
     throw new Error("No image loaded");
   }
+
+  let sourceImg: RasterSource | null = null;
 
   try {
     // Ensure fonts are ready before text compositing
     await document.fonts.ready;
 
     // Preload source image as bitmap
-    const sourceImg = await loadImageBitmap(imageSrc);
-    const { width, height } = getExportDimensions(sourceImg, state.crop, EXPORT_SCALE);
+    sourceImg = await loadRasterSource(imageSrc);
+    const { width: sourceWidth, height: sourceHeight } = getSourceSize(sourceImg);
+    const cropGeometry = getCropGeometry(sourceWidth, sourceHeight, state.crop);
+    const croppedSize = getCroppedSourceDimensions(
+      sourceWidth,
+      sourceHeight,
+      state.crop,
+    );
+    const { width, height } = resolveExportDimensions(
+      croppedSize.width,
+      croppedSize.height,
+      target,
+    );
 
     // Create offscreen canvas for export
-    const canvas = new OffscreenCanvas(width, height);
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-
-    if (!ctx) {
-      throw new Error("Failed to get canvas context");
-    }
+    const canvas = createWorkingCanvas(width, height);
+    const ctx = getWorkingContext(canvas);
 
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
@@ -254,33 +492,28 @@ export async function exportProjectImage(
     ctx.scale(state.crop.flipX ? -1 : 1, state.crop.flipY ? -1 : 1);
     ctx.translate(-centerX, -centerY);
 
-    const cropPoints = [
-      state.crop.perspective.tl,
-      state.crop.perspective.tr,
-      state.crop.perspective.br,
-      state.crop.perspective.bl,
-    ];
-    const xs = cropPoints.map((p) => p.x);
-    const ys = cropPoints.map((p) => p.y);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-
-    const cropW = maxX - minX;
-    const cropH = maxY - minY;
-    const cropWidthPct = cropW > 0 ? cropW : 100;
-    const cropHeightPct = cropH > 0 ? cropH : 100;
+    const fabric = state.textLayers.length ? await import("fabric") : null;
 
     for (const layer of state.textLayers) {
+      const mappedPosition = mapSourcePointToCrop(
+        {
+          x: (layer.xPct / 100) * sourceWidth,
+          y: (layer.yPct / 100) * sourceHeight,
+        },
+        cropGeometry,
+      );
       const mappedLayer = {
         ...layer,
-        xPct: ((layer.xPct - minX) / cropWidthPct) * 100,
-        yPct: ((layer.yPct - minY) / cropHeightPct) * 100,
-        widthPct: (layer.widthPct / cropWidthPct) * 100,
-        fontSizePct: (layer.fontSizePct / cropHeightPct) * 100,
+        xPct: mappedPosition.x * 100,
+        yPct: mappedPosition.y * 100,
+        widthPct:
+          (((layer.widthPct / 100) * sourceWidth) / cropGeometry.width) * 100,
+        fontSizePct:
+          (((layer.fontSizePct / 100) * sourceHeight) / cropGeometry.height) * 100,
       };
-      compositeTextLayer(ctx, mappedLayer, width, height, stageSize);
+      if (fabric) {
+        compositeTextLayer(ctx, mappedLayer, width, height, fabric, stageSize);
+      }
     }
     ctx.restore();
 
@@ -288,21 +521,33 @@ export async function exportProjectImage(
     const mimeType = format === "png" ? "image/png" : "image/jpeg";
     const exportQuality = format === "jpeg" ? quality / 100 : 1;
 
-    const blob = await canvas.convertToBlob({
-      type: mimeType,
-      quality: exportQuality,
-    });
+    const encoded = await encodeCanvasWithinLimit(
+      canvas,
+      mimeType,
+      exportQuality,
+      getExportTarget(target).maxBytes,
+    );
+    const extension = format === "png" ? "png" : "jpg";
+    const targetSlug = target === "original" ? "original" : target;
+    triggerDownload(
+      encoded.blob,
+      `eikasia-${targetSlug}-${width}x${height}-${Date.now()}.${extension}`,
+    );
 
-    if (!blob) {
-      throw new Error("Failed to create blob");
-    }
-
-    triggerDownload(blob, `eikasia-export-${Date.now()}.${format === "png" ? "png" : "jpg"}`);
-
-    sourceImg.close();
+    return {
+      width,
+      height,
+      bytes: encoded.blob.size,
+      quality: Math.round(encoded.quality * 100),
+      target,
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     throw new Error(`Export failed: ${message}`);
+  } finally {
+    if (sourceImg && "close" in sourceImg) {
+      sourceImg.close();
+    }
   }
 }
 
@@ -310,48 +555,87 @@ export async function exportProjectImage(
 // Canvas Drawing Helpers
 // ────────────────────────────────────────────────────────────────────────────
 
-async function loadImageBitmap(src: string): Promise<ImageBitmap> {
-  const response = await fetch(src, { credentials: "same-origin" });
-  if (!response.ok) {
-    throw new Error(`Failed to load image: ${response.statusText}`);
+async function loadRasterSource(src: string): Promise<RasterSource> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const response = await fetch(src, { credentials: "same-origin" });
+      if (response.ok) {
+        return await createImageBitmap(await response.blob());
+      }
+    } catch {
+      // Older mobile browsers can expose createImageBitmap without supporting
+      // every source type. Fall through to the image element path.
+    }
   }
-  const blob = await response.blob();
-  return createImageBitmap(blob);
+
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Failed to decode source image"));
+    image.src = src;
+  });
 }
 
-function getExportDimensions(
-  img: RasterSource,
-  crop: ProjectState["crop"],
-  scale: number,
-): { width: number; height: number } {
-  const { width: sourceWidth, height: sourceHeight } = getSourceSize(img);
-  const points = [crop.perspective.tl, crop.perspective.tr, crop.perspective.br, crop.perspective.bl];
-  const xs = points.map((p) => (p.x * sourceWidth) / 100);
-  const ys = points.map((p) => (p.y * sourceHeight) / 100);
-
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-
-  const rawW = maxX - minX;
-  const rawH = maxY - minY;
-
-  // Maximum dimension cap to prevent 33MB+ PNGs or crashes (e.g. 4k max)
-  const MAX_DIM = 4096;
-  let finalW = rawW * scale;
-  let finalH = rawH * scale;
-
-  if (finalW > MAX_DIM || finalH > MAX_DIM) {
-    const ratio = Math.min(MAX_DIM / finalW, MAX_DIM / finalH);
-    finalW *= ratio;
-    finalH *= ratio;
+function encodeCanvas(
+  canvas: OffscreenCanvas | HTMLCanvasElement,
+  type: string,
+  quality: number,
+): Promise<Blob> {
+  if (canvas instanceof HTMLCanvasElement) {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error("Failed to encode image"));
+          }
+        },
+        type,
+        quality,
+      );
+    });
   }
 
-  return {
-    width: Math.max(1, Math.round(finalW)),
-    height: Math.max(1, Math.round(finalH)),
-  };
+  return canvas.convertToBlob({ type, quality });
+}
+
+async function encodeCanvasWithinLimit(
+  canvas: OffscreenCanvas | HTMLCanvasElement,
+  type: string,
+  requestedQuality: number,
+  maxBytes: number | null,
+) {
+  const quality = clamp(requestedQuality, 0.4, 1);
+  const initialBlob = await encodeCanvas(canvas, type, quality);
+
+  if (type !== "image/jpeg" || maxBytes === null || initialBlob.size <= maxBytes) {
+    return { blob: initialBlob, quality };
+  }
+
+  // X and LinkedIn reject images above 5 MB. Search for the highest JPEG
+  // quality that stays just under their shared limit instead of failing the
+  // upload or asking the platform to perform a harsher emergency transcode.
+  let low = 0.5;
+  let high = quality;
+  let bestBlob = await encodeCanvas(canvas, type, low);
+  let bestQuality = low;
+
+  for (let attempt = 0; attempt < 7; attempt++) {
+    const candidateQuality = (low + high) / 2;
+    const candidateBlob = await encodeCanvas(canvas, type, candidateQuality);
+
+    if (candidateBlob.size <= maxBytes) {
+      bestBlob = candidateBlob;
+      bestQuality = candidateQuality;
+      low = candidateQuality;
+    } else {
+      high = candidateQuality;
+    }
+  }
+
+  return { blob: bestBlob, quality: bestQuality };
 }
 
 export function drawCroppedImage(
@@ -360,41 +644,222 @@ export function drawCroppedImage(
   crop: ProjectState["crop"],
   canvasW: number,
   canvasH: number,
+  applyCropTransform = true,
 ): void {
-  const { width: sourceWidth, height: sourceHeight } = getSourceSize(img);
-  // Use crop bounds to determine source region
-  const points = [crop.perspective.tl, crop.perspective.tr, crop.perspective.br, crop.perspective.bl];
-  const xs = points.map((p) => p.x);
-  const ys = points.map((p) => p.y);
-  const minX = Math.min(...xs) / 100;
-  const minY = Math.min(...ys) / 100;
-  const maxX = Math.max(...xs) / 100;
-  const maxY = Math.max(...ys) / 100;
-
-  const srcX = sourceWidth * minX;
-  const srcY = sourceHeight * minY;
-  const srcW = sourceWidth * (maxX - minX);
-  const srcH = sourceHeight * (maxY - minY);
+  const croppedCanvas = getRectifiedCropCanvas(img, crop, canvasW, canvasH);
 
   ctx.save();
-  // Ensure we draw covering the whole destination
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
 
-  // If rotation/flip is applied, we transform the context
   const centerX = canvasW / 2;
   const centerY = canvasH / 2;
-  ctx.translate(centerX, centerY);
-  ctx.rotate((crop.rotation * Math.PI) / 180);
-  ctx.scale(crop.flipX ? -1 : 1, crop.flipY ? -1 : 1);
-  ctx.translate(-centerX, -centerY);
+  if (applyCropTransform) {
+    ctx.translate(centerX, centerY);
+    ctx.rotate((crop.rotation * Math.PI) / 180);
+    ctx.scale(crop.flipX ? -1 : 1, crop.flipY ? -1 : 1);
+    ctx.translate(-centerX, -centerY);
+  }
+  ctx.drawImage(croppedCanvas, 0, 0, canvasW, canvasH);
+  ctx.restore();
+}
 
-  ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, canvasW, canvasH);
+function getRectifiedCropCanvas(
+  img: RasterSource,
+  crop: ProjectState["crop"],
+  canvasW: number,
+  canvasH: number,
+) {
+  const { width: sourceWidth, height: sourceHeight } = getSourceSize(img);
+  const geometry = getCropGeometry(sourceWidth, sourceHeight, crop);
+  const width = Math.max(1, Math.round(canvasW));
+  const height = Math.max(1, Math.round(canvasH));
+  const pointKey = [
+    geometry.points.tl,
+    geometry.points.tr,
+    geometry.points.br,
+    geometry.points.bl,
+  ]
+    .map((point) => `${point.x.toFixed(3)},${point.y.toFixed(3)}`)
+    .join(":");
+  const cacheKey = `${width}x${height}:${pointKey}`;
+  const sourceCache = cropCanvasCache.get(img) ?? new Map();
+  const cached = sourceCache.get(cacheKey);
+
+  if (cached) {
+    sourceCache.delete(cacheKey);
+    sourceCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  const canvas = createWorkingCanvas(width, height);
+  const context = getWorkingContext(canvas);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+
+  if (geometry.isAxisAligned) {
+    const sourceCropWidth = Math.max(1, geometry.bounds.maxX - geometry.bounds.minX);
+    const sourceCropHeight = Math.max(1, geometry.bounds.maxY - geometry.bounds.minY);
+    context.drawImage(
+      img,
+      geometry.bounds.minX,
+      geometry.bounds.minY,
+      sourceCropWidth,
+      sourceCropHeight,
+      0,
+      0,
+      width,
+      height,
+    );
+  } else {
+    drawPerspectiveCropMesh(context, img, geometry.points, width, height);
+  }
+
+  sourceCache.set(cacheKey, canvas);
+  cropCanvasCache.set(img, sourceCache);
+
+  while (sourceCache.size > CROP_CACHE_LIMIT_PER_SOURCE) {
+    const oldestKey = sourceCache.keys().next().value;
+
+    if (oldestKey === undefined) {
+      break;
+    }
+
+    sourceCache.delete(oldestKey);
+  }
+
+  return canvas;
+}
+
+function drawPerspectiveCropMesh(
+  ctx: RasterContext,
+  img: RasterSource,
+  points: ProjectState["crop"]["perspective"],
+  width: number,
+  height: number,
+) {
+  // Canvas2D has no native quadrilateral draw. Subdividing the crop into a
+  // modest mesh gives a stable perspective correction while keeping export
+  // memory bounded on mobile browsers.
+  const columns = clamp(Math.ceil(width / 72), 8, 24);
+  const rows = clamp(Math.ceil(height / 72), 8, 24);
+
+  for (let row = 0; row < rows; row++) {
+    const v0 = row / rows;
+    const v1 = (row + 1) / rows;
+    const y0 = (row * height) / rows;
+    const y1 = ((row + 1) * height) / rows;
+
+    for (let column = 0; column < columns; column++) {
+      const u0 = column / columns;
+      const u1 = (column + 1) / columns;
+      const x0 = (column * width) / columns;
+      const x1 = ((column + 1) * width) / columns;
+      const sourceTopLeft = interpolateCropPoint(points, u0, v0);
+      const sourceTopRight = interpolateCropPoint(points, u1, v0);
+      const sourceBottomRight = interpolateCropPoint(points, u1, v1);
+      const sourceBottomLeft = interpolateCropPoint(points, u0, v1);
+
+      drawImageTriangle(
+        ctx,
+        img,
+        [sourceTopLeft, sourceTopRight, sourceBottomRight],
+        [
+          { x: x0, y: y0 },
+          { x: x1, y: y0 },
+          { x: x1, y: y1 },
+        ],
+      );
+      drawImageTriangle(
+        ctx,
+        img,
+        [sourceTopLeft, sourceBottomRight, sourceBottomLeft],
+        [
+          { x: x0, y: y0 },
+          { x: x1, y: y1 },
+          { x: x0, y: y1 },
+        ],
+      );
+    }
+  }
+}
+
+function drawImageTriangle(
+  ctx: RasterContext,
+  img: RasterSource,
+  source: [{ x: number; y: number }, { x: number; y: number }, { x: number; y: number }],
+  destination: [{ x: number; y: number }, { x: number; y: number }, { x: number; y: number }],
+) {
+  const [s0, s1, s2] = source;
+  const [d0, d1, d2] = destination;
+  const denominator =
+    s0.x * (s1.y - s2.y) +
+    s1.x * (s2.y - s0.y) +
+    s2.x * (s0.y - s1.y);
+
+  if (Math.abs(denominator) < 0.000001) {
+    return;
+  }
+
+  const a =
+    (d0.x * (s1.y - s2.y) +
+      d1.x * (s2.y - s0.y) +
+      d2.x * (s0.y - s1.y)) /
+    denominator;
+  const c =
+    (d0.x * (s2.x - s1.x) +
+      d1.x * (s0.x - s2.x) +
+      d2.x * (s1.x - s0.x)) /
+    denominator;
+  const e =
+    (d0.x * (s1.x * s2.y - s2.x * s1.y) +
+      d1.x * (s2.x * s0.y - s0.x * s2.y) +
+      d2.x * (s0.x * s1.y - s1.x * s0.y)) /
+    denominator;
+  const b =
+    (d0.y * (s1.y - s2.y) +
+      d1.y * (s2.y - s0.y) +
+      d2.y * (s0.y - s1.y)) /
+    denominator;
+  const d =
+    (d0.y * (s2.x - s1.x) +
+      d1.y * (s0.x - s2.x) +
+      d2.y * (s1.x - s0.x)) /
+    denominator;
+  const f =
+    (d0.y * (s1.x * s2.y - s2.x * s1.y) +
+      d1.y * (s2.x * s0.y - s0.x * s2.y) +
+      d2.y * (s0.x * s1.y - s1.x * s0.y)) /
+    denominator;
+  const center = {
+    x: (d0.x + d1.x + d2.x) / 3,
+    y: (d0.y + d1.y + d2.y) / 3,
+  };
+  const expanded = destination.map((point) => {
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    const length = Math.hypot(dx, dy) || 1;
+
+    return {
+      x: point.x + (dx / length) * 0.55,
+      y: point.y + (dy / length) * 0.55,
+    };
+  });
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(expanded[0].x, expanded[0].y);
+  ctx.lineTo(expanded[1].x, expanded[1].y);
+  ctx.lineTo(expanded[2].x, expanded[2].y);
+  ctx.closePath();
+  ctx.clip();
+  ctx.setTransform(a, b, c, d, e, f);
+  ctx.drawImage(img, 0, 0);
   ctx.restore();
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Color Matrix Pipeline (SVG feColorMatrix as ImageData)
+// Color pipeline (CSS filters + SVG feColorMatrix in a single ImageData pass)
 // ────────────────────────────────────────────────────────────────────────────
 
 function resolveMatrix(look: LookDefinition, acrosChannel: string): string {
@@ -404,45 +869,154 @@ function resolveMatrix(look: LookDefinition, acrosChannel: string): string {
   return look.matrix;
 }
 
-function applyColorMatrixToCanvas(
+type ParsedCssFilter =
+  | { type: "brightness" | "contrast" | "saturate" | "sepia"; value: number }
+  | { type: "hue-rotate"; value: number; cos: number; sin: number };
+
+const parsedFilterCache = new Map<string, readonly ParsedCssFilter[]>();
+const parsedMatrixCache = new Map<string, readonly number[]>();
+
+function getParsedFilter(filterString: string): readonly ParsedCssFilter[] {
+  const cached = parsedFilterCache.get(filterString);
+
+  if (cached) {
+    return cached;
+  }
+
+  const parsed = parseCssFilterString(filterString);
+  parsedFilterCache.set(filterString, parsed);
+  return parsed;
+}
+
+function getParsedMatrix(matrixStr: string): readonly number[] | null {
+  const cached = parsedMatrixCache.get(matrixStr);
+
+  if (cached) {
+    return cached;
+  }
+
+  const parsed = matrixStr.trim().split(/\s+/).map(Number);
+
+  if (parsed.length !== 20 || parsed.some((value) => !Number.isFinite(value))) {
+    return null;
+  }
+
+  parsedMatrixCache.set(matrixStr, parsed);
+  return parsed;
+}
+
+function applyLookTransformToCanvas(
   ctx: RasterContext,
+  filterString: string,
   matrixStr: string,
-  intensity: number,
   w: number,
   h: number,
 ): void {
-  const matrix = matrixStr.trim().split(/\s+/).map(Number);
-  if (matrix.length !== 20) return;
+  const matrix = getParsedMatrix(matrixStr);
+
+  if (!matrix) {
+    return;
+  }
+
+  const operations = getParsedFilter(filterString);
 
   const imageData = ctx.getImageData(0, 0, w, h);
   const data = imageData.data;
+  const m0 = matrix[0];
+  const m1 = matrix[1];
+  const m2 = matrix[2];
+  const m3 = matrix[3];
+  const m4 = matrix[4] * 255;
+  const m5 = matrix[5];
+  const m6 = matrix[6];
+  const m7 = matrix[7];
+  const m8 = matrix[8];
+  const m9 = matrix[9] * 255;
+  const m10 = matrix[10];
+  const m11 = matrix[11];
+  const m12 = matrix[12];
+  const m13 = matrix[13];
+  const m14 = matrix[14] * 255;
 
-  // Faster loop with typed array
   const len = data.length;
   for (let i = 0; i < len; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
+    let r = data[i];
+    let g = data[i + 1];
+    let b = data[i + 2];
     const a = data[i + 3];
 
-    // SVG Color Matrix: [m0...m4, m5...m9, m10...m14, m15...m19]
-    // R' = m0*R + m1*G + m2*B + m3*A + m4*255
-    const nr = matrix[0] * r + matrix[1] * g + matrix[2] * b + matrix[3] * a + matrix[4] * 255;
-    const ng = matrix[5] * r + matrix[6] * g + matrix[7] * b + matrix[8] * a + matrix[9] * 255;
-    const nb = matrix[10] * r + matrix[11] * g + matrix[12] * b + matrix[13] * a + matrix[14] * 255;
+    for (let operationIndex = 0; operationIndex < operations.length; operationIndex++) {
+      const operation = operations[operationIndex];
 
-    // Direct linear interpolation + clamping
-    data[i] = clampByte(r + (nr - r) * intensity);
-    data[i + 1] = clampByte(g + (ng - g) * intensity);
-    data[i + 2] = clampByte(b + (nb - b) * intensity);
+      switch (operation.type) {
+        case "brightness":
+          r *= operation.value;
+          g *= operation.value;
+          b *= operation.value;
+          break;
+        case "contrast":
+          r = (r - 128) * operation.value + 128;
+          g = (g - 128) * operation.value + 128;
+          b = (b - 128) * operation.value + 128;
+          break;
+        case "saturate": {
+          const luminance = 0.213 * r + 0.715 * g + 0.072 * b;
+          r = luminance + (r - luminance) * operation.value;
+          g = luminance + (g - luminance) * operation.value;
+          b = luminance + (b - luminance) * operation.value;
+          break;
+        }
+        case "hue-rotate": {
+          const nextR =
+            (0.213 + operation.cos * 0.787 - operation.sin * 0.213) * r +
+            (0.715 - operation.cos * 0.715 - operation.sin * 0.715) * g +
+            (0.072 - operation.cos * 0.072 + operation.sin * 0.928) * b;
+          const nextG =
+            (0.213 - operation.cos * 0.213 + operation.sin * 0.143) * r +
+            (0.715 + operation.cos * 0.285 + operation.sin * 0.14) * g +
+            (0.072 - operation.cos * 0.072 - operation.sin * 0.283) * b;
+          const nextB =
+            (0.213 - operation.cos * 0.213 - operation.sin * 0.787) * r +
+            (0.715 - operation.cos * 0.715 + operation.sin * 0.715) * g +
+            (0.072 + operation.cos * 0.928 + operation.sin * 0.072) * b;
+
+          r = nextR;
+          g = nextG;
+          b = nextB;
+          break;
+        }
+        case "sepia": {
+          const nextR = 0.393 * r + 0.769 * g + 0.189 * b;
+          const nextG = 0.349 * r + 0.686 * g + 0.168 * b;
+          const nextB = 0.272 * r + 0.534 * g + 0.131 * b;
+
+          r += (nextR - r) * operation.value;
+          g += (nextG - g) * operation.value;
+          b += (nextB - b) * operation.value;
+          break;
+        }
+      }
+
+      if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) {
+        r = 0;
+        g = 0;
+        b = 0;
+        break;
+      }
+    }
+
+    const packed = packGamutMappedRgb(
+      m0 * r + m1 * g + m2 * b + m3 * a + m4,
+      m5 * r + m6 * g + m7 * b + m8 * a + m9,
+      m10 * r + m11 * g + m12 * b + m13 * a + m14,
+    );
+    data[i] = packed >> 16;
+    data[i + 1] = (packed >> 8) & 0xff;
+    data[i + 2] = packed & 0xff;
   }
 
   ctx.putImageData(imageData, 0, 0);
 }
-
-type ParsedCssFilter =
-  | { type: "brightness" | "contrast" | "saturate" | "sepia"; value: number }
-  | { type: "hue-rotate"; value: number };
 
 function compositeLookLayer(
   ctx: RasterContext,
@@ -453,13 +1027,17 @@ function compositeLookLayer(
   h: number,
   intensity: number,
   drawSource: DrawSourceImage,
+  sourceVariantKey: string,
 ): void {
-  const lookCanvas = createWorkingCanvas(w, h);
-  const lookCtx = getWorkingContext(lookCanvas);
-
-  drawSource(lookCtx, img, w, h);
-  applyCssFilterToCanvas(lookCtx, look.cssFilter, w, h);
-  applyColorMatrixToCanvas(lookCtx, resolveMatrix(look, acrosChannel), 1, w, h);
+  const lookCanvas = getLookCanvas(
+    img,
+    look,
+    acrosChannel,
+    w,
+    h,
+    drawSource,
+    sourceVariantKey,
+  );
 
   ctx.save();
   ctx.globalAlpha = clamp(intensity * look.renderRecipe.layerOpacity, 0, 1);
@@ -479,97 +1057,6 @@ function compositeLookLayer(
   });
 }
 
-function applyCssFilterToCanvas(
-  ctx: RasterContext,
-  filterString: string,
-  w: number,
-  h: number,
-): void {
-  const operations = parseCssFilterString(filterString);
-
-  if (!operations.length) {
-    return;
-  }
-
-  const imageData = ctx.getImageData(0, 0, w, h);
-  const data = imageData.data;
-
-  for (let i = 0; i < data.length; i += 4) {
-    let r = data[i];
-    let g = data[i + 1];
-    let b = data[i + 2];
-
-    operations.forEach((operation) => {
-      switch (operation.type) {
-        case "brightness":
-          r *= operation.value;
-          g *= operation.value;
-          b *= operation.value;
-          break;
-        case "contrast":
-          r = (r - 128) * operation.value + 128;
-          g = (g - 128) * operation.value + 128;
-          b = (b - 128) * operation.value + 128;
-          break;
-        case "saturate":
-          {
-            const lum = 0.213 * r + 0.715 * g + 0.072 * b;
-            r = lum + (r - lum) * operation.value;
-            g = lum + (g - lum) * operation.value;
-            b = lum + (b - lum) * operation.value;
-          }
-          break;
-        case "hue-rotate":
-          {
-            const angle = (operation.value * Math.PI) / 180;
-            const cos = Math.cos(angle);
-            const sin = Math.sin(angle);
-            const nextR =
-              (0.213 + cos * 0.787 - sin * 0.213) * r +
-              (0.715 - cos * 0.715 - sin * 0.715) * g +
-              (0.072 - cos * 0.072 + sin * 0.928) * b;
-            const nextG =
-              (0.213 - cos * 0.213 + sin * 0.143) * r +
-              (0.715 + cos * 0.285 + sin * 0.14) * g +
-              (0.072 - cos * 0.072 - sin * 0.283) * b;
-            const nextB =
-              (0.213 - cos * 0.213 - sin * 0.787) * r +
-              (0.715 - cos * 0.715 + sin * 0.715) * g +
-              (0.072 + cos * 0.928 + sin * 0.072) * b;
-
-            r = nextR;
-            g = nextG;
-            b = nextB;
-          }
-          break;
-        case "sepia":
-          {
-            const nextR = 0.393 * r + 0.769 * g + 0.189 * b;
-            const nextG = 0.349 * r + 0.686 * g + 0.168 * b;
-            const nextB = 0.272 * r + 0.534 * g + 0.131 * b;
-
-            r = r + (nextR - r) * operation.value;
-            g = g + (nextG - g) * operation.value;
-            b = b + (nextB - b) * operation.value;
-          }
-          break;
-      }
-
-      // Clamp intermediate values to [0, 255] after each CSS filter operation
-      // to match browser rendering pipeline behavior.
-      r = Math.max(0, Math.min(255, r));
-      g = Math.max(0, Math.min(255, g));
-      b = Math.max(0, Math.min(255, b));
-    });
-
-    data[i] = clampByte(r);
-    data[i + 1] = clampByte(g);
-    data[i + 2] = clampByte(b);
-  }
-
-  ctx.putImageData(imageData, 0, 0);
-}
-
 function parseCssFilterString(filterString: string): ParsedCssFilter[] {
   const operations: ParsedCssFilter[] = [];
 
@@ -583,7 +1070,13 @@ function parseCssFilterString(filterString: string): ParsedCssFilter[] {
     }
 
     if (rawType === "hue-rotate") {
-      operations.push({ type: rawType, value });
+      const angle = (value * Math.PI) / 180;
+      operations.push({
+        type: rawType,
+        value,
+        cos: Math.cos(angle),
+        sin: Math.sin(angle),
+      });
       continue;
     }
 
@@ -648,35 +1141,9 @@ function applyAdjustmentsToCanvas(
   const tintShift = adj.tint / 100;
   const rTint = tintShift * 10;
   const gTint = -tintShift * 10;
-  const exposureScale = Math.pow(2, (adj.exposure / 100) * 1.2);
-
   for (let i = 0; i < 256; i++) {
     const buildChannel = (offset: number): number => {
-      let v = (i + offset) / 255;
-
-      v *= exposureScale;
-
-      if (v > 0.4) {
-        v += (adj.highlights / 100) * 0.25 * ((v - 0.4) / 0.6);
-      }
-
-      if (v < 0.6) {
-        v += (adj.shadows / 100) * 0.25 * ((0.6 - v) / 0.6);
-      }
-
-      v += (adj.whites / 100) * 0.15 * Math.max(0, v - 0.7);
-      v += (adj.blacks / 100) * 0.15 * Math.max(0, 0.3 - v);
-
-      if (adj.fade > 0) {
-        const lift = (adj.fade / 100) * 0.14;
-        v = v * (1 - lift) + lift;
-      }
-
-      if (v > 1) {
-        v = toneMapFilmic(v);
-      }
-
-      return clampByte(v * 255);
+      return clampByte(mapToneValue((i + offset) / 255, adj) * 255);
     };
 
     rLUT[i] = buildChannel(rTemp + rTint);
@@ -694,9 +1161,9 @@ function applyAdjustmentsToCanvas(
 
     if (adj.saturation !== 0) {
       const lum = 0.213 * r + 0.715 * g + 0.072 * b;
-      r = clampByte(lum + (r - lum) * satScale);
-      g = clampByte(lum + (g - lum) * satScale);
-      b = clampByte(lum + (b - lum) * satScale);
+      r = lum + (r - lum) * satScale;
+      g = lum + (g - lum) * satScale;
+      b = lum + (b - lum) * satScale;
     }
 
     if (adj.vibrance !== 0) {
@@ -705,10 +1172,15 @@ function applyAdjustmentsToCanvas(
       const sat = maxC === 0 ? 0 : (maxC - minC) / maxC;
       const vibBoost = vibStrength * (1 - sat);
       const lum = 0.213 * r + 0.715 * g + 0.072 * b;
-      r = clampByte(lum + (r - lum) * (1 + vibBoost));
-      g = clampByte(lum + (g - lum) * (1 + vibBoost));
-      b = clampByte(lum + (b - lum) * (1 + vibBoost));
+      r = lum + (r - lum) * (1 + vibBoost);
+      g = lum + (g - lum) * (1 + vibBoost);
+      b = lum + (b - lum) * (1 + vibBoost);
     }
+
+    const packed = packGamutMappedRgb(r, g, b);
+    r = packed >> 16;
+    g = (packed >> 8) & 0xff;
+    b = packed & 0xff;
 
     const lum = 0.213 * r + 0.715 * g + 0.072 * b;
     const dr = r - lum;
@@ -763,16 +1235,20 @@ function applyDetailAdjustments(
     mixBlurredCanvas(ctx, w, h, clamp(adj.noiseReduction / 180, 0, 0.45));
   }
 
+  // Keep the perceived radius stable between low-resolution interaction,
+  // settled preview, and full export instead of treating it as a raw pixel size.
+  const radiusScale = clamp(Math.max(w, h) / 1000, 0.45, 5);
+
   if (adj.clarity !== 0) {
-    applyUnsharpMask(ctx, w, h, 1.8, adj.clarity / 240);
+    applyUnsharpMask(ctx, w, h, 1.8 * radiusScale, adj.clarity / 240);
   }
 
   if (adj.texture !== 0) {
-    applyUnsharpMask(ctx, w, h, 0.9, adj.texture / 320);
+    applyUnsharpMask(ctx, w, h, 0.9 * radiusScale, adj.texture / 320);
   }
 
   if (adj.sharpness !== 0) {
-    applyUnsharpMask(ctx, w, h, 0.6, adj.sharpness / 180);
+    applyUnsharpMask(ctx, w, h, 0.6 * radiusScale, adj.sharpness / 180);
   }
 }
 
@@ -998,13 +1474,20 @@ function drawGrainOverlay(
     return;
   }
 
-  // Use a smaller noise buffer and scale it up to create "grain" rather than "digital noise"
-  const noiseScale = clamp(0.5 - (size - 40) / 320, 0.22, 0.78);
-  const nw = Math.max(1, Math.floor(w * noiseScale));
-  const nh = Math.max(1, Math.floor(h * noiseScale));
+  // Generate grain in normalized image space so the same seeded pattern stays
+  // locked to the photo when preview resolution changes. Basing texture size
+  // on output pixels made the grain visibly pop between draft, full, and export.
+  const aspect = clamp(Math.round((w / h) * 100) / 100, 0.2, 5);
+  const grainScale = clamp(1 - (size - 20) / 100, 0.3, 0.9);
+  const longSide = Math.max(192, Math.round(768 * grainScale));
+  const nw = aspect >= 1 ? longSide : Math.max(1, Math.round(longSide * aspect));
+  const nh = aspect >= 1 ? Math.max(1, Math.round(longSide / aspect)) : longSide;
 
   const noiseCanvas = getGrainTextureCanvas(nw, nh, intensity, size, seed);
+  const smoothing = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = true;
   ctx.drawImage(noiseCanvas, 0, 0, w, h);
+  ctx.imageSmoothingEnabled = smoothing;
 }
 
 function getGrainTextureCanvas(
@@ -1102,17 +1585,28 @@ function drawBorderOverlay(
   presetId: string,
 ): void {
   if (presetId === "kodak-border") {
-    const borderW = Math.round(18 * (w / 960));
+    const borderW = Math.max(1, Math.round(w * 0.022));
     ctx.fillStyle = "black";
     ctx.fillRect(0, 0, w, borderW);
     ctx.fillRect(0, h - borderW, w, borderW);
     ctx.fillRect(0, 0, borderW * 0.5, h);
     ctx.fillRect(w - borderW * 0.5, 0, borderW * 0.5, h);
   } else if (presetId === "negative-strip") {
-    const stripW = Math.round(w * 0.08);
+    const stripW = Math.max(2, Math.round(w * 0.085));
     ctx.fillStyle = "black";
     ctx.fillRect(0, 0, stripW, h);
     ctx.fillRect(w - stripW, 0, stripW, h);
+
+    const holeWidth = Math.max(1, stripW * 0.38);
+    const holeHeight = Math.max(2, h * 0.026);
+    const holeGap = Math.max(2, h * 0.052);
+    const holeInset = (stripW - holeWidth) / 2;
+    ctx.fillStyle = "rgba(238,224,190,0.82)";
+
+    for (let y = holeGap * 0.45; y < h; y += holeGap) {
+      ctx.fillRect(holeInset, y, holeWidth, holeHeight);
+      ctx.fillRect(w - stripW + holeInset, y, holeWidth, holeHeight);
+    }
   } else if (presetId === "polaroid-border") {
     const side = Math.round(w * 0.048);
     const top = Math.round(h * 0.048);
@@ -1122,6 +1616,41 @@ function drawBorderOverlay(
     ctx.fillRect(0, h - bottom, w, bottom);
     ctx.fillRect(0, 0, side, h);
     ctx.fillRect(w - side, 0, side, h);
+  } else if (presetId === "super8-border") {
+    const side = Math.max(2, Math.round(w * 0.065));
+    const top = Math.max(2, Math.round(h * 0.035));
+    const bottom = Math.max(2, Math.round(h * 0.055));
+    ctx.fillStyle = "#050505";
+    ctx.fillRect(0, 0, w, top);
+    ctx.fillRect(0, h - bottom, w, bottom);
+    ctx.fillRect(0, 0, side, h);
+    ctx.fillRect(w - side * 0.72, 0, side * 0.72, h);
+
+    ctx.fillStyle = "rgba(242,229,190,0.72)";
+    const perforationWidth = Math.max(1, side * 0.28);
+    const perforationHeight = Math.max(2, h * 0.036);
+    const perforationGap = Math.max(2, h * 0.078);
+    for (let y = perforationGap * 0.4; y < h; y += perforationGap) {
+      ctx.fillRect(
+        side * 0.22,
+        y,
+        perforationWidth,
+        perforationHeight,
+      );
+    }
+  } else if (presetId === "instax-border") {
+    const side = Math.max(2, Math.round(w * 0.052));
+    const top = Math.max(2, Math.round(h * 0.052));
+    const bottom = Math.max(2, Math.round(h * 0.19));
+    ctx.fillStyle = "#f4f1e9";
+    ctx.fillRect(0, 0, w, top);
+    ctx.fillRect(0, h - bottom, w, bottom);
+    ctx.fillRect(0, 0, side, h);
+    ctx.fillRect(w - side, 0, side, h);
+
+    ctx.strokeStyle = "rgba(82,78,70,0.18)";
+    ctx.lineWidth = Math.max(1, Math.round(Math.min(w, h) * 0.002));
+    ctx.strokeRect(side, top, w - side * 2, h - top - bottom);
   }
 }
 
@@ -1132,20 +1661,21 @@ function drawDustOverlay(
   seed: number,
 ): void {
   const random = createSeededRandom(seed);
+  const detailScale = clamp(Math.min(w, h) / 800, 0.6, 5);
   // Procedural dust specks and scratches
   ctx.fillStyle = "rgba(255,255,255,0.68)";
   const specks = 10;
   for (let i = 0; i < specks; i++) {
     const x = random() * w;
     const y = random() * h;
-    const r = random() * 1.5;
+    const r = Math.max(0.45, random() * 1.5 * detailScale);
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
   }
 
   ctx.strokeStyle = "rgba(255,255,255,0.34)";
-  ctx.lineWidth = 0.5;
+  ctx.lineWidth = Math.max(0.5, 0.5 * detailScale);
   for (let i = 0; i < 3; i++) {
     ctx.beginPath();
     ctx.moveTo(random() * w * 0.2, random() * h);
@@ -1175,10 +1705,11 @@ function drawFlareOverlay(
 // ────────────────────────────────────────────────────────────────────────────
 
 function compositeTextLayer(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: RasterContext,
   layer: TextLayer,
   w: number,
   h: number,
+  fabric: Pick<typeof import("fabric"), "Shadow" | "StaticCanvas" | "Textbox">,
   stageSize?: { width: number; height: number },
 ): void {
   // Create a temporary HTML canvas in the browser document
@@ -1187,7 +1718,7 @@ function compositeTextLayer(
   tempCanvasEl.height = h;
 
   // Initialize a Fabric StaticCanvas on it
-  const staticCanvas = new StaticCanvas(tempCanvasEl, {
+  const staticCanvas = new fabric.StaticCanvas(tempCanvasEl, {
     enableRetinaScaling: false,
     renderOnAddRemove: false,
   });
@@ -1196,16 +1727,21 @@ function compositeTextLayer(
   const options = getFabricTextboxOptions(layer, w, h);
 
   // Create the Textbox object
-  const textbox = new Textbox(layer.text, {
+  const textbox = new fabric.Textbox(layer.text, {
     ...options,
     editable: false,
-  } as ConstructorParameters<typeof Textbox>[1]);
+  } as ConstructorParameters<typeof fabric.Textbox>[1]);
 
   // Calculate shadow scaling factor:
   // Ratio of export canvas height to the preview stage height.
   // Default to 1 if stageSize is not available.
   const scaleFactor = stageSize?.height ? h / stageSize.height : 1;
-  textbox.shadow = createScaledTextShadow(layer.shadowPreset, layer.color, scaleFactor);
+  const shadow = getScaledTextShadowOptions(
+    layer.shadowPreset,
+    layer.color,
+    scaleFactor,
+  );
+  textbox.shadow = shadow ? new fabric.Shadow(shadow) : null;
 
   // Add the textbox to the canvas and render
   staticCanvas.add(textbox);

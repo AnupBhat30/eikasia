@@ -17,6 +17,7 @@ import { getLookRenderRecipe } from "@/lib/look-style";
 
 export const MAX_HISTORY = 50;
 export const DEFAULT_LOOK_ID: string | null = null;
+export const AUTO_GRAIN_LAYER_ID = "grain-default";
 
 export const DEFAULT_ADJUSTMENTS: Adjustments = {
   exposure: 0,
@@ -42,7 +43,6 @@ export const DEFAULT_ADJUSTMENTS: Adjustments = {
 
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
-const DEFAULT_LOOK_GRAIN_AMOUNT_CAP = 18;
 const DEFAULT_LOOK_GRAIN_SIZE_MIN = 24;
 const DEFAULT_LOOK_GRAIN_SIZE_MAX = 42;
 const DEFAULT_LOOK_GRAIN_OPACITY_CAP = 0.2;
@@ -2309,7 +2309,7 @@ export function createRecommendedGrainLayer(
   };
 
   return {
-    id: existingLayer?.id ?? "grain-default",
+    id: existingLayer?.id ?? AUTO_GRAIN_LAYER_ID,
     type: "grain" as const,
     presetId: getClosestGrainPresetId(subtleGrain),
     opacity: subtleGrain.opacity,
@@ -2319,26 +2319,17 @@ export function createRecommendedGrainLayer(
   };
 }
 
-export function normalizeLookAdjustments(
-  adjustments: Partial<Adjustments> | undefined,
-): Partial<Adjustments> {
-  if (!adjustments) {
-    return {};
+export function resolveLookGrainLayer(
+  look: LookDefinition | null,
+  existingLayer: ProjectState["overlayLayers"][number] | null,
+) {
+  if (existingLayer && existingLayer.id !== AUTO_GRAIN_LAYER_ID) {
+    return existingLayer;
   }
 
-  return {
-    ...adjustments,
-    grainAmount: clamp(
-      adjustments.grainAmount ?? DEFAULT_ADJUSTMENTS.grainAmount,
-      0,
-      DEFAULT_LOOK_GRAIN_AMOUNT_CAP,
-    ),
-    grainSize: clamp(
-      adjustments.grainSize ?? DEFAULT_ADJUSTMENTS.grainSize,
-      DEFAULT_LOOK_GRAIN_SIZE_MIN,
-      DEFAULT_LOOK_GRAIN_SIZE_MAX,
-    ),
-  };
+  return look
+    ? createRecommendedGrainLayer(look.preset.grain, existingLayer)
+    : null;
 }
 
 export const LIGHT_LEAK_PRESETS: OverlayPresetDefinition[] = [
@@ -2447,6 +2438,7 @@ export const ASPECT_RATIO_PRESETS: AspectRatioPreset[] = [
   { id: "1:1", label: "1:1", value: 1 },
   { id: "3:2", label: "3:2", value: 3 / 2 },
   { id: "4:3", label: "4:3", value: 4 / 3 },
+  { id: "3:4", label: "3:4", value: 3 / 4 },
   { id: "16:9", label: "16:9", value: 16 / 9 },
   { id: "1.91:1", label: "1.91:1", value: 1.91 },
   { id: "2.39:1", label: "2.39:1", value: 2.39 },
@@ -2514,23 +2506,12 @@ export const BLEND_MODE_OPTIONS: { value: BlendMode; label: string }[] = [
   { value: "multiply", label: "Multiply" },
 ];
 
-export function getLookFilterId(lookId: string, acrosChannel: AcrosChannel) {
-  if (lookId === "acros") {
-    return `look-${lookId}-${acrosChannel}`;
-  }
-
-  return `look-${lookId}`;
-}
-
 export function getLookDefinition(lookId: string | null) {
   return ALL_LOOKS.find((look) => look.id === lookId) ?? null;
 }
 
 export function createInitialProjectState(): ProjectState {
   const defaultLook = getLookDefinition(DEFAULT_LOOK_ID);
-  const normalizedLookAdjustments = normalizeLookAdjustments(
-    defaultLook?.preset.adjustments,
-  );
 
   return {
     imageSrc: null,
@@ -2540,10 +2521,7 @@ export function createInitialProjectState(): ProjectState {
     activeLookId: defaultLook?.id ?? DEFAULT_LOOK_ID,
     filterIntensity: defaultLook?.preset.filterIntensity ?? 0,
     acrosChannel: "neutral",
-    adjustments: {
-      ...DEFAULT_ADJUSTMENTS,
-      ...normalizedLookAdjustments,
-    },
+    adjustments: { ...DEFAULT_ADJUSTMENTS },
     textLayers: [],
     overlayLayers: defaultLook
       ? [createRecommendedGrainLayer(defaultLook.preset.grain)]

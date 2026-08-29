@@ -1,4 +1,3 @@
-import { Shadow } from "fabric";
 import type { FontFamilyKey, ShadowPreset, TextLayer } from "@/components/editor/types";
 import { fromPercentage } from "@/lib/utils";
 
@@ -113,21 +112,20 @@ export function getFabricTextboxOptions(
   };
 }
 
-export function createScaledTextShadow(
+export function getScaledTextShadowOptions(
   preset: ShadowPreset,
   color: string,
   scaleFactor: number = 1,
-): Shadow | null {
+): TextShadowStyle | null {
   const shadow = getTextShadowStyle(preset, color);
   if (!shadow) {
     return null;
   }
 
-  return new Shadow({
+  return {
     color: shadow.color,
     blur: shadow.blur * scaleFactor,
     offsetX: shadow.offsetX * scaleFactor,
     offsetY: shadow.offsetY * scaleFactor,
-  });
+  };
 }
-

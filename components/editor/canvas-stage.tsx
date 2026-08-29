@@ -35,11 +35,31 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import {
-  createScaledTextShadow,
   getFabricTextboxOptions,
+  getScaledTextShadowOptions,
   resolveTextFontFamily,
 } from "@/lib/text-style";
-import { drawCoverImage, renderProjectRaster } from "@/lib/exportImage";
+import {
+  drawCoverImage,
+  drawCroppedImage,
+  renderProjectRaster,
+  type RasterProjectState,
+} from "@/lib/exportImage";
+import {
+  canvasViewportTransform,
+  normalizeCanvasViewport,
+  translateCanvasViewport,
+  zoomCanvasViewportAtPoint,
+  type CanvasViewport,
+  type ViewportPoint,
+} from "@/lib/canvas-viewport";
+import { selectPendingPreviewJob } from "@/lib/preview-render-scheduling";
+import {
+  getCropGeometry,
+  interpolateCropPoint,
+  mapSourcePointToCrop,
+  type CropGeometry,
+} from "@/lib/social-export";
 import { clamp, cn, fromPercentage, round, toPercentage } from "@/lib/utils";
 
 type EditorTextbox = Textbox & {
@@ -57,12 +77,38 @@ interface StageSize {
   height: number;
 }
 
+type CropPerspective = ProjectState["crop"]["perspective"];
+type PreviewQuality = "fast" | "full";
+
+interface PreviewRenderJob {
+  revision: number;
+  quality: PreviewQuality;
+  width: number;
+  height: number;
+  state: RasterProjectState;
+  crop: ProjectState["crop"] | null;
+}
+
+type PreviewWorkerResponse =
+  | { type: "ready" }
+  | {
+      type: "rendered";
+      revision: number;
+      quality: PreviewQuality;
+      width: number;
+      height: number;
+      bitmap: ImageBitmap;
+    }
+  | { type: "error"; message: string };
+
 const CONTAINER_SIZE_JITTER_TOLERANCE_PX = 2;
 const CONTAINER_SIZE_SETTLE_MS = 80;
+const PREVIEW_FULL_SETTLE_MS = 140;
 
 export interface CanvasStageHandle {
   getElement: () => HTMLDivElement | null;
   deselectText: () => void;
+  editSelectedText: () => void;
   getStageSize: () => { width: number; height: number };
 }
 
@@ -167,8 +213,65 @@ function fitStage(natural: StageSize | null, available: StageSize): StageSize {
   const scale = Math.min(maxWidth / natural.width, maxHeight / natural.height);
 
   return {
-    width: Math.round(Math.max(minWidth, natural.width * scale)),
-    height: Math.round(Math.max(minHeight, natural.height * scale)),
+    // Never clamp the two axes independently: doing so changes the visible
+    // aspect ratio for narrow/ultrawide crops and makes the workspace disagree
+    // with the exported pixels.
+    width: Math.max(1, Math.round(natural.width * scale)),
+    height: Math.max(1, Math.round(natural.height * scale)),
+  };
+}
+
+function mapTextLayerToCropWorkspace(
+  layer: TextLayer,
+  geometry: CropGeometry | null,
+  sourceSize: StageSize | null,
+): TextLayer {
+  if (!geometry || !sourceSize) {
+    return layer;
+  }
+
+  const position = mapSourcePointToCrop(
+    {
+      x: (layer.xPct / 100) * sourceSize.width,
+      y: (layer.yPct / 100) * sourceSize.height,
+    },
+    geometry,
+  );
+
+  return {
+    ...layer,
+    xPct: position.x * 100,
+    yPct: position.y * 100,
+    widthPct:
+      (((layer.widthPct / 100) * sourceSize.width) / geometry.width) * 100,
+    fontSizePct:
+      (((layer.fontSizePct / 100) * sourceSize.height) / geometry.height) * 100,
+  };
+}
+
+function mapTextLayerFromCropWorkspace(
+  layer: TextLayer,
+  geometry: CropGeometry | null,
+  sourceSize: StageSize | null,
+): TextLayer {
+  if (!geometry || !sourceSize) {
+    return layer;
+  }
+
+  const position = interpolateCropPoint(
+    geometry.points,
+    layer.xPct / 100,
+    layer.yPct / 100,
+  );
+
+  return {
+    ...layer,
+    xPct: (position.x / sourceSize.width) * 100,
+    yPct: (position.y / sourceSize.height) * 100,
+    widthPct:
+      (((layer.widthPct / 100) * geometry.width) / sourceSize.width) * 100,
+    fontSizePct:
+      (((layer.fontSizePct / 100) * geometry.height) / sourceSize.height) * 100,
   };
 }
 
@@ -320,7 +423,12 @@ function applyLayerToTextbox(
     br: true,
     mtr: false,
   });
-  textbox.shadow = createScaledTextShadow(layer.shadowPreset, layer.color, 1);
+  const shadow = getScaledTextShadowOptions(
+    layer.shadowPreset,
+    layer.color,
+    1,
+  );
+  textbox.shadow = shadow ? new Shadow(shadow) : null;
   textbox.globalCompositeOperation = blendModeToComposite(layer.blendMode);
   textbox.data = { layerId: layer.id };
   textbox.setCoords();
@@ -381,11 +489,15 @@ function normalizeTextboxScale(textbox: EditorTextbox) {
   textbox.setCoords();
 }
 
-function getTouchDistance(first: React.Touch, second: React.Touch) {
-  return Math.hypot(
-    first.clientX - second.clientX,
-    first.clientY - second.clientY,
-  );
+function getPointDistance(first: ViewportPoint, second: ViewportPoint) {
+  return Math.hypot(first.x - second.x, first.y - second.y);
+}
+
+function getPointCentre(first: ViewportPoint, second: ViewportPoint) {
+  return {
+    x: (first.x + second.x) / 2,
+    y: (first.y + second.y) / 2,
+  };
 }
 
 function serializeCanvas(
@@ -775,17 +887,26 @@ export const CanvasStage = React.forwardRef<
   } = useEditor();
 
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const viewportSurfaceRef = React.useRef<HTMLDivElement>(null);
+  const viewportTransformRef = React.useRef<HTMLDivElement>(null);
+  const zoomReadoutRef = React.useRef<HTMLDivElement>(null);
   const captureRef = React.useRef<HTMLDivElement>(null);
   const previewCanvasRef = React.useRef<HTMLCanvasElement>(null);
+  const previewRendererRef = React.useRef<
+    ((state: RasterProjectState) => void) | null
+  >(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const fabricCanvasRef = React.useRef<Canvas | null>(null);
   const isSyncingRef = React.useRef(false);
-  const latestPerspectiveRef = React.useRef(project.crop.perspective);
+  const latestPerspectiveRef = React.useRef<CropPerspective>(
+    project.crop.perspective,
+  );
   React.useEffect(() => {
     latestPerspectiveRef.current = project.crop.perspective;
   }, [project.crop.perspective]);
   const latestTextLayersRef = React.useRef(project.textLayers);
   const panOriginRef = React.useRef<{
+    pointerId: number;
     x: number;
     y: number;
     offsetX: number;
@@ -806,13 +927,14 @@ export const CanvasStage = React.forwardRef<
   const cropBoxDragStartRef = React.useRef<{
     pointerX: number;
     pointerY: number;
-    perspective: typeof project.crop.perspective;
+    perspective: CropPerspective;
   } | null>(null);
-  const [draftPerspective, setDraftPerspective] = React.useState<
-    typeof project.crop.perspective | null
-  >(null);
-  const draftPerspectiveRef = React.useRef<typeof project.crop.perspective | null>(null);
-  const [viewport, setViewport] = React.useState({
+  const [draftPerspective, setDraftPerspective] =
+    React.useState<CropPerspective | null>(null);
+  const draftPerspectiveRef = React.useRef<CropPerspective | null>(null);
+  const perspectiveRenderRafRef = React.useRef(0);
+  const pendingPerspectiveRenderRef = React.useRef<CropPerspective | null>(null);
+  const [viewport, setViewport] = React.useState<CanvasViewport>({
     zoom: 1,
     offsetX: 0,
     offsetY: 0,
@@ -821,31 +943,47 @@ export const CanvasStage = React.forwardRef<
   const [draftTextLayerUpdates, setDraftTextLayerUpdates] = React.useState<
     Record<string, Partial<TextLayer>>
   >({});
-  const [spacePressed, setSpacePressed] = React.useState(false);
-  const [panning, setPanning] = React.useState(false);
-  const touchPanOriginRef = React.useRef<{
-    x: number;
-    y: number;
-    offsetX: number;
-    offsetY: number;
+  const textDraftRafRef = React.useRef(0);
+  const pendingTextDraftRef = React.useRef<{
+    layerId: string;
+    updates: Partial<TextLayer>;
   } | null>(null);
-  const touchPinchRef = React.useRef<{
+  const [spacePressed, setSpacePressed] = React.useState(false);
+  const activeTouchPointersRef = React.useRef(
+    new Map<number, ViewportPoint>(),
+  );
+  const pointerPinchRef = React.useRef<{
     distance: number;
-    zoom: number;
+    viewport: CanvasViewport;
+    centre: ViewportPoint;
   } | null>(null);
   const viewportRafRef = React.useRef(0);
-  const pendingViewportRef = React.useRef<{
-    zoom: number;
-    offsetX: number;
-    offsetY: number;
-  } | null>(null);
+  const viewportCommitTimeoutRef = React.useRef(0);
+  const pendingViewportRef = React.useRef<CanvasViewport | null>(null);
+  const viewportGestureActiveRef = React.useRef(false);
+  const viewportRectRef = React.useRef<DOMRect | null>(null);
   const latestViewportRef = React.useRef(viewport);
   const latestActiveTabRef = React.useRef(activeTab);
 
   const containerSize = useContainerSize(containerRef);
+  const cropGeometry = React.useMemo(
+    () =>
+      naturalSize
+        ? getCropGeometry(naturalSize.width, naturalSize.height, project.crop)
+        : null,
+    [naturalSize, project.crop],
+  );
+  const usesCroppedWorkspace = activeTab !== "crop";
+  const workspaceNaturalSize = React.useMemo(
+    () =>
+      usesCroppedWorkspace && cropGeometry
+        ? { width: cropGeometry.width, height: cropGeometry.height }
+        : naturalSize,
+    [cropGeometry, naturalSize, usesCroppedWorkspace],
+  );
   const stageSize = React.useMemo(
-    () => fitStage(naturalSize, containerSize),
-    [containerSize, naturalSize],
+    () => fitStage(workspaceNaturalSize, containerSize),
+    [containerSize, workspaceNaturalSize],
   );
   const latestStageSizeRef = React.useRef(stageSize);
 
@@ -853,16 +991,7 @@ export const CanvasStage = React.forwardRef<
     () => getLookDefinition(project.activeLookId),
     [project.activeLookId],
   );
-  const rasterProject = React.useMemo<
-    Pick<
-      ProjectState,
-      | "activeLookId"
-      | "filterIntensity"
-      | "acrosChannel"
-      | "adjustments"
-      | "overlayLayers"
-    >
-  >(
+  const rasterProject = React.useMemo<RasterProjectState>(
     () => ({
       activeLookId: project.activeLookId,
       filterIntensity: project.filterIntensity,
@@ -878,20 +1007,64 @@ export const CanvasStage = React.forwardRef<
       project.overlayLayers,
     ],
   );
+  const latestRasterProjectRef = React.useRef(rasterProject);
+  React.useEffect(() => {
+    latestRasterProjectRef.current = rasterProject;
+  }, [rasterProject]);
   const selectedTextLayer = React.useMemo(
     () =>
       project.textLayers.find((layer) => layer.id === selectedTextId) ?? null,
     [project.textLayers, selectedTextId],
   );
-  const selectedTextFontSize = selectedTextLayer
-    ? fromPercentage(selectedTextLayer.fontSizePct, stageSize.height)
+  const mapLayerToWorkspace = React.useCallback(
+    (layer: TextLayer) =>
+      usesCroppedWorkspace
+        ? mapTextLayerToCropWorkspace(layer, cropGeometry, naturalSize)
+        : layer,
+    [cropGeometry, naturalSize, usesCroppedWorkspace],
+  );
+  const mapLayerFromWorkspace = React.useCallback(
+    (layer: TextLayer) =>
+      usesCroppedWorkspace
+        ? mapTextLayerFromCropWorkspace(layer, cropGeometry, naturalSize)
+        : layer,
+    [cropGeometry, naturalSize, usesCroppedWorkspace],
+  );
+  const latestMapLayerFromWorkspaceRef = React.useRef(mapLayerFromWorkspace);
+  const updateTextLayerInWorkspace = React.useCallback(
+    (layerId: string, updates: Partial<TextLayer>) => {
+      const layer = project.textLayers.find((candidate) => candidate.id === layerId);
+
+      if (!layer) {
+        return;
+      }
+
+      updateTextLayer(
+        layerId,
+        mapLayerFromWorkspace({
+          ...mapLayerToWorkspace(layer),
+          ...updates,
+        }),
+      );
+    },
+    [mapLayerFromWorkspace, mapLayerToWorkspace, project.textLayers, updateTextLayer],
+  );
+  const selectedWorkspaceTextLayer = selectedTextLayer
+    ? mapLayerToWorkspace(selectedTextLayer)
+    : null;
+  const effectiveEditingTextId =
+    activeTab === "text" && editingTextId === selectedTextId
+      ? editingTextId
+      : null;
+  const selectedTextFontSize = selectedWorkspaceTextLayer
+    ? fromPercentage(selectedWorkspaceTextLayer.fontSizePct, stageSize.height)
     : 0;
   const selectedTextTracking = selectedTextLayer
     ? charSpacingToPixels(selectedTextLayer.letterSpacing, selectedTextFontSize)
     : 0;
   const trackingSliderMax = Math.max(40, Math.ceil(selectedTextTracking + 4));
-  const selectedTextWidth = selectedTextLayer
-    ? fromPercentage(selectedTextLayer.widthPct, stageSize.width)
+  const selectedTextWidth = selectedWorkspaceTextLayer
+    ? fromPercentage(selectedWorkspaceTextLayer.widthPct, stageSize.width)
     : 0;
 
   const displayedPerspective = draftPerspective ?? project.crop.perspective;
@@ -941,17 +1114,26 @@ export const CanvasStage = React.forwardRef<
         canvas.discardActiveObject();
         canvas.requestRenderAll();
       },
+      editSelectedText: () => {
+        if (selectedTextId) {
+          setEditingTextId(selectedTextId);
+        }
+      },
       getStageSize: () => ({
         width: latestStageSizeRef.current.width,
         height: latestStageSizeRef.current.height,
       }),
     }),
-    [exitCanvasTextEditing],
+    [exitCanvasTextEditing, selectedTextId],
   );
 
   React.useEffect(() => {
     latestTextLayersRef.current = project.textLayers;
   }, [project.textLayers]);
+
+  React.useEffect(() => {
+    latestMapLayerFromWorkspaceRef.current = mapLayerFromWorkspace;
+  }, [mapLayerFromWorkspace]);
 
   React.useEffect(() => {
     latestStageSizeRef.current = stageSize;
@@ -970,27 +1152,29 @@ export const CanvasStage = React.forwardRef<
       if (viewportRafRef.current) {
         window.cancelAnimationFrame(viewportRafRef.current);
       }
+      if (viewportCommitTimeoutRef.current) {
+        window.clearTimeout(viewportCommitTimeoutRef.current);
+      }
+      if (perspectiveRenderRafRef.current) {
+        window.cancelAnimationFrame(perspectiveRenderRafRef.current);
+      }
+      if (textDraftRafRef.current) {
+        window.cancelAnimationFrame(textDraftRafRef.current);
+      }
     },
     [],
   );
 
   const queueViewport = React.useCallback(
-    (nextViewport: { zoom: number; offsetX: number; offsetY: number }) => {
-      const normalizedZoom =
-        Math.abs(nextViewport.zoom - 1) < 0.01 ? 1 : nextViewport.zoom;
-      const finalViewport =
-        normalizedZoom === 1
-          ? { zoom: 1, offsetX: 0, offsetY: 0 }
-          : {
-              zoom: normalizedZoom,
-              offsetX: round(nextViewport.offsetX, 2),
-              offsetY: round(nextViewport.offsetY, 2),
-            };
-
+    (nextViewport: CanvasViewport) => {
+      const finalViewport = normalizeCanvasViewport(nextViewport);
+      // This ref is the camera source of truth during an interaction. Updating
+      // it synchronously avoids accumulating deltas against a frame-old value.
+      latestViewportRef.current = finalViewport;
       pendingViewportRef.current = finalViewport;
 
       if (viewportRafRef.current) {
-        return;
+        return finalViewport;
       }
 
       viewportRafRef.current = window.requestAnimationFrame(() => {
@@ -999,48 +1183,144 @@ export const CanvasStage = React.forwardRef<
         pendingViewportRef.current = null;
 
         if (pendingViewport) {
-          setViewport((previous) => {
-            const sameViewport =
-              Math.abs(previous.zoom - pendingViewport.zoom) < 0.001 &&
-              Math.abs(previous.offsetX - pendingViewport.offsetX) < 0.01 &&
-              Math.abs(previous.offsetY - pendingViewport.offsetY) < 0.01;
+          const node = viewportTransformRef.current;
+          if (node) {
+            node.style.transform = canvasViewportTransform(pendingViewport);
+          }
+          if (zoomReadoutRef.current) {
+            zoomReadoutRef.current.textContent = `${Math.round(pendingViewport.zoom * 100)}%`;
+          }
+        }
+      });
 
-            return sameViewport ? previous : pendingViewport;
-          });
+      return finalViewport;
+    },
+    [],
+  );
+
+  const commitViewport = React.useCallback(() => {
+    if (viewportCommitTimeoutRef.current) {
+      window.clearTimeout(viewportCommitTimeoutRef.current);
+      viewportCommitTimeoutRef.current = 0;
+    }
+    viewportRectRef.current = null;
+
+    const current = latestViewportRef.current;
+    setViewport((previous) => {
+      const sameViewport =
+        Math.abs(previous.zoom - current.zoom) < 0.000_001 &&
+        Math.abs(previous.offsetX - current.offsetX) < 0.000_001 &&
+        Math.abs(previous.offsetY - current.offsetY) < 0.000_001;
+
+      return sameViewport ? previous : current;
+    });
+  }, []);
+
+  React.useEffect(() => {
+    queueViewport({ zoom: 1, offsetX: 0, offsetY: 0 });
+    commitViewport();
+  }, [commitViewport, queueViewport, usesCroppedWorkspace]);
+
+  const scheduleViewportCommit = React.useCallback(() => {
+    if (viewportCommitTimeoutRef.current) {
+      window.clearTimeout(viewportCommitTimeoutRef.current);
+    }
+
+    viewportCommitTimeoutRef.current = window.setTimeout(() => {
+      viewportCommitTimeoutRef.current = 0;
+      commitViewport();
+    }, 120);
+  }, [commitViewport]);
+
+  const getViewportPoint = React.useCallback(
+    (clientX: number, clientY: number) => {
+      const rect =
+        viewportRectRef.current ??
+        viewportSurfaceRef.current?.getBoundingClientRect();
+
+      if (!rect) {
+        return { x: 0, y: 0 };
+      }
+
+      viewportRectRef.current = rect;
+
+      return {
+        x: clientX - (rect.left + rect.width / 2),
+        y: clientY - (rect.top + rect.height / 2),
+      };
+    },
+    [],
+  );
+
+  const queuePerspectiveRender = React.useCallback(
+    (next: CropPerspective) => {
+      draftPerspectiveRef.current = next;
+      latestPerspectiveRef.current = next;
+      pendingPerspectiveRenderRef.current = next;
+
+      if (perspectiveRenderRafRef.current) {
+        return;
+      }
+
+      perspectiveRenderRafRef.current = window.requestAnimationFrame(() => {
+        perspectiveRenderRafRef.current = 0;
+        const pending = pendingPerspectiveRenderRef.current;
+        pendingPerspectiveRenderRef.current = null;
+        if (pending) {
+          setDraftPerspective(pending);
         }
       });
     },
     [],
   );
 
+  const cancelPerspectiveRender = React.useCallback(() => {
+    if (perspectiveRenderRafRef.current) {
+      window.cancelAnimationFrame(perspectiveRenderRafRef.current);
+      perspectiveRenderRafRef.current = 0;
+    }
+    pendingPerspectiveRenderRef.current = null;
+  }, []);
+
+  const queueTextDraftRender = React.useCallback(
+    (layerId: string, updates: Partial<TextLayer>) => {
+      pendingTextDraftRef.current = { layerId, updates };
+
+      if (textDraftRafRef.current) {
+        return;
+      }
+
+      textDraftRafRef.current = window.requestAnimationFrame(() => {
+        textDraftRafRef.current = 0;
+        const pending = pendingTextDraftRef.current;
+        pendingTextDraftRef.current = null;
+        if (pending) {
+          setDraftTextLayerUpdates((current) => ({
+            ...current,
+            [pending.layerId]: {
+              ...current[pending.layerId],
+              ...pending.updates,
+            },
+          }));
+        }
+      });
+    },
+    [],
+  );
+
+  const cancelTextDraftRender = React.useCallback(() => {
+    if (textDraftRafRef.current) {
+      window.cancelAnimationFrame(textDraftRafRef.current);
+      textDraftRafRef.current = 0;
+    }
+    pendingTextDraftRef.current = null;
+  }, []);
+
   React.useEffect(() => {
-    if (!selectedTextId) {
-      setEditingTextId(null);
+    if (!effectiveEditingTextId) {
       exitCanvasTextEditing();
-      return;
     }
-
-    if (editingTextId && editingTextId !== selectedTextId) {
-      setEditingTextId(null);
-    }
-  }, [editingTextId, exitCanvasTextEditing, selectedTextId]);
-
-  React.useEffect(() => {
-    if (activeTab === "text") {
-      return;
-    }
-
-    setEditingTextId(null);
-    exitCanvasTextEditing();
-  }, [activeTab, exitCanvasTextEditing]);
-
-  React.useEffect(() => {
-    setViewport({
-      zoom: 1,
-      offsetX: 0,
-      offsetY: 0,
-    });
-  }, [project.imageSrc]);
+  }, [effectiveEditingTextId, exitCanvasTextEditing]);
 
   React.useEffect(() => {
     const isTypingTarget = (target: EventTarget | null) => {
@@ -1121,8 +1401,6 @@ export const CanvasStage = React.forwardRef<
 
   React.useEffect(() => {
     if (!project.imageSrc) {
-      setNaturalSize(null);
-      setSourceImage(null);
       return;
     }
 
@@ -1147,6 +1425,8 @@ export const CanvasStage = React.forwardRef<
     };
   }, [project.imageSrc, setImageDimensions]);
 
+  const previewCrop = usesCroppedWorkspace ? project.crop : null;
+
   React.useEffect(() => {
     const previewCanvas = previewCanvasRef.current;
 
@@ -1161,15 +1441,7 @@ export const CanvasStage = React.forwardRef<
 
     const renderWidth = Math.max(1, Math.round(stageSize.width));
     const renderHeight = Math.max(1, Math.round(stageSize.height));
-    const grainOverlay = rasterProject.overlayLayers.find(
-      (layer) => layer.type === "grain",
-    );
-    const grainLoadScore =
-      rasterProject.adjustments.grainAmount +
-      (grainOverlay?.intensity ?? 0) * (grainOverlay?.opacity ?? 0.14);
-    const isHeavyGrain = grainLoadScore > 24;
-    const mediaQuery = window.matchMedia("(pointer: coarse)");
-    const isCoarsePointer = mediaQuery.matches;
+    const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
     const smallestViewportSide = Math.min(
       window.innerWidth || renderWidth,
       window.innerHeight || renderHeight,
@@ -1184,33 +1456,20 @@ export const CanvasStage = React.forwardRef<
     const useMobileProfile =
       isCoarsePointer && (isSmallViewport || isLowPowerDevice);
     const devicePixelRatio = window.devicePixelRatio || 1;
-    const fullDpr = useMobileProfile
-      ? Math.min(devicePixelRatio, isHeavyGrain ? 1.8 : 2.2)
-      : Math.min(devicePixelRatio, isHeavyGrain ? 1.35 : 1.5);
-    const fastDpr = useMobileProfile
-      ? Math.min(fullDpr, isHeavyGrain ? 1.4 : 1.8)
-      : Math.min(fullDpr, isHeavyGrain ? 0.74 : 0.92);
-    const fastBudget = useMobileProfile
-      ? isHeavyGrain
-        ? 1_200_000
-        : 1_800_000
-      : isHeavyGrain
-        ? 780_000
-        : 1_080_000;
-    const fullBudget = useMobileProfile
-      ? isHeavyGrain
-        ? 2_200_000
-        : 3_200_000
-      : isHeavyGrain
-        ? 1_420_000
-        : 2_000_000;
-    const shouldRenderHighQuality =
-      !useMobileProfile && fullDpr - fastDpr > 0.01;
-    let fastFrameId = 0;
-    let fullFrameId = 0;
-    let fullRenderTimer = 0;
+    const allowFullRender = !useMobileProfile && !isLowPowerDevice;
+    let cancelled = false;
+    let fallbackFrameId = 0;
+    let worker: Worker | null = null;
+    let workerReady = false;
+    let workerBusy = false;
+    let usingFallback = false;
+    let pendingWorkerJob: PreviewRenderJob | null = null;
+    let pendingFallbackJob: PreviewRenderJob | null = null;
+    let fullRenderTimeout = 0;
+    let currentRevision = 0;
+    let lastScheduledState: RasterProjectState | null = null;
 
-    const renderPreview = (targetDpr: number, pixelBudget: number) => {
+    const getRenderSize = (targetDpr: number, pixelBudget: number) => {
       const estimatedPixels =
         renderWidth * renderHeight * targetDpr * targetDpr;
       const budgetScale =
@@ -1218,54 +1477,287 @@ export const CanvasStage = React.forwardRef<
           ? Math.sqrt(pixelBudget / estimatedPixels)
           : 1;
       const effectiveDpr = Math.max(0.55, targetDpr * budgetScale);
-      const pixelWidth = Math.max(1, Math.round(renderWidth * effectiveDpr));
-      const pixelHeight = Math.max(1, Math.round(renderHeight * effectiveDpr));
+      return {
+        width: Math.max(1, Math.round(renderWidth * effectiveDpr)),
+        height: Math.max(1, Math.round(renderHeight * effectiveDpr)),
+      };
+    };
 
-      if (
-        previewCanvas.width !== pixelWidth ||
-        previewCanvas.height !== pixelHeight
-      ) {
-        previewCanvas.width = pixelWidth;
-        previewCanvas.height = pixelHeight;
-      }
+    const getRenderSizes = (state: RasterProjectState) => {
+      const grainOverlay = state.overlayLayers.find(
+        (layer) => layer.type === "grain",
+      );
+      const grainLoadScore =
+        state.adjustments.grainAmount +
+        (grainOverlay?.intensity ?? 0) * (grainOverlay?.opacity ?? 0.14);
+      const isHeavyGrain = grainLoadScore > 24;
+      const fullDpr = Math.min(devicePixelRatio, isHeavyGrain ? 1.1 : 1.25);
+      const fastDpr = useMobileProfile
+        ? Math.min(devicePixelRatio, 1)
+        : Math.min(fullDpr, isHeavyGrain ? 0.7 : 0.85);
+      const fastBudget = useMobileProfile
+        ? isHeavyGrain
+          ? 320_000
+          : 460_000
+        : isHeavyGrain
+          ? 560_000
+          : 720_000;
+      const fullBudget = isHeavyGrain ? 900_000 : 1_200_000;
 
-      const context = previewCanvas.getContext("2d", {
-        willReadFrequently: true,
-      });
+      return {
+        fast: getRenderSize(fastDpr, fastBudget),
+        full: getRenderSize(fullDpr, fullBudget),
+      };
+    };
 
-      if (!context) {
+    const paintBitmap = (bitmap: ImageBitmap, width: number, height: number) => {
+      if (cancelled) {
+        bitmap.close();
         return;
       }
 
-      renderProjectRaster({
-        ctx: context,
-        state: rasterProject,
-        source: sourceImage,
-        width: pixelWidth,
-        height: pixelHeight,
-        drawSource: (renderContext, renderSource, width, height) =>
-          drawCoverImage(renderContext, renderSource, width, height),
+      if (previewCanvas.width !== width || previewCanvas.height !== height) {
+        previewCanvas.width = width;
+        previewCanvas.height = height;
+      }
+
+      const context = previewCanvas.getContext("2d", { colorSpace: "srgb" });
+
+      if (!context) {
+        bitmap.close();
+        return;
+      }
+
+      context.clearRect(0, 0, width, height);
+      context.drawImage(bitmap, 0, 0);
+      bitmap.close();
+    };
+
+    const flushFallback = () => {
+      if (fallbackFrameId || cancelled || !pendingFallbackJob) {
+        return;
+      }
+
+      fallbackFrameId = window.requestAnimationFrame(() => {
+        fallbackFrameId = 0;
+        const job = pendingFallbackJob;
+        pendingFallbackJob = null;
+
+        if (cancelled || !job) {
+          return;
+        }
+
+        const { width, height } = job;
+        if (previewCanvas.width !== width || previewCanvas.height !== height) {
+          previewCanvas.width = width;
+          previewCanvas.height = height;
+        }
+
+        const context = previewCanvas.getContext("2d", {
+          willReadFrequently: true,
+          colorSpace: "srgb",
+        });
+
+        if (!context) {
+          return;
+        }
+
+        renderProjectRaster({
+          ctx: context,
+          state: job.state,
+          source: sourceImage,
+          width,
+          height,
+          sourceVariantKey: job.crop
+            ? JSON.stringify(job.crop.perspective)
+            : "full-source",
+          drawSource: job.crop
+            ? (renderContext, renderSource, renderCanvasWidth, renderCanvasHeight) =>
+                drawCroppedImage(
+                  renderContext,
+                  renderSource,
+                  job.crop!,
+                  renderCanvasWidth,
+                  renderCanvasHeight,
+                  false,
+                )
+            : drawCoverImage,
+        });
+        flushFallback();
       });
     };
 
-    fastFrameId = window.requestAnimationFrame(() => {
-      renderPreview(fastDpr, fastBudget);
-    });
+    const queueFallback = (job: PreviewRenderJob) => {
+      pendingFallbackJob = job;
+      flushFallback();
+    };
 
-    if (shouldRenderHighQuality) {
-      fullRenderTimer = window.setTimeout(() => {
-        fullFrameId = window.requestAnimationFrame(() => {
-          renderPreview(fullDpr, fullBudget);
-        });
-      }, 90);
+    const postWorkerJob = (job: PreviewRenderJob) => {
+      if (!worker || !workerReady || workerBusy || cancelled) {
+        pendingWorkerJob = job;
+        return;
+      }
+
+      workerBusy = true;
+      worker.postMessage({ type: "render", ...job });
+    };
+
+    const queueWorkerJob = (job: PreviewRenderJob) => {
+      if (!workerReady || workerBusy) {
+        pendingWorkerJob = selectPendingPreviewJob(pendingWorkerJob, job);
+        return;
+      }
+
+      postWorkerJob(job);
+    };
+
+    const flushWorker = () => {
+      if (!pendingWorkerJob || workerBusy || !workerReady || cancelled) {
+        return;
+      }
+
+      const job = pendingWorkerJob;
+      pendingWorkerJob = null;
+      postWorkerJob(job);
+    };
+
+    const schedulePreview = (state: RasterProjectState) => {
+      if (cancelled || state === lastScheduledState) {
+        return;
+      }
+
+      lastScheduledState = state;
+      currentRevision += 1;
+      const revision = currentRevision;
+      const sizes = getRenderSizes(state);
+
+      if (fullRenderTimeout) {
+        window.clearTimeout(fullRenderTimeout);
+        fullRenderTimeout = 0;
+      }
+
+      const fastJob: PreviewRenderJob = {
+        revision,
+        quality: "fast",
+        ...sizes.fast,
+        state,
+        crop: previewCrop,
+      };
+
+      if (usingFallback) {
+        queueFallback(fastJob);
+        return;
+      }
+
+      queueWorkerJob(fastJob);
+
+      if (allowFullRender) {
+        fullRenderTimeout = window.setTimeout(() => {
+          fullRenderTimeout = 0;
+
+          if (cancelled || revision !== currentRevision) {
+            return;
+          }
+
+          queueWorkerJob({
+            revision,
+            quality: "full",
+            ...sizes.full,
+            state,
+            crop: previewCrop,
+          });
+        }, PREVIEW_FULL_SETTLE_MS);
+      }
+    };
+
+    const switchToFallback = () => {
+      if (usingFallback || cancelled) {
+        return;
+      }
+
+      usingFallback = true;
+      worker?.terminate();
+      worker = null;
+      workerReady = false;
+      workerBusy = false;
+      pendingWorkerJob = null;
+      lastScheduledState = null;
+      schedulePreview(latestRasterProjectRef.current);
+    };
+
+    const supportsWorkerPreview =
+      typeof Worker !== "undefined" &&
+      typeof OffscreenCanvas !== "undefined" &&
+      typeof createImageBitmap === "function";
+
+    if (supportsWorkerPreview) {
+      worker = new Worker(
+        new URL("../../workers/preview-render.worker.ts", import.meta.url),
+        { type: "module" },
+      );
+      worker.onmessage = (event: MessageEvent<PreviewWorkerResponse>) => {
+        if (event.data.type === "ready") {
+          workerReady = true;
+          flushWorker();
+          return;
+        }
+
+        if (event.data.type === "rendered") {
+          workerBusy = false;
+
+          if (event.data.revision === currentRevision) {
+            paintBitmap(event.data.bitmap, event.data.width, event.data.height);
+          } else {
+            event.data.bitmap.close();
+          }
+
+          flushWorker();
+          return;
+        }
+
+        switchToFallback();
+      };
+      worker.onerror = (event) => {
+        event.preventDefault();
+        switchToFallback();
+      };
+
+      void createImageBitmap(sourceImage)
+        .then((bitmap) => {
+          if (cancelled || !worker) {
+            bitmap.close();
+            return;
+          }
+
+          worker.postMessage({ type: "init", source: bitmap }, [bitmap]);
+        })
+        .catch(switchToFallback);
+    } else {
+      usingFallback = true;
     }
 
+    previewRendererRef.current = schedulePreview;
+    schedulePreview(latestRasterProjectRef.current);
+
     return () => {
-      window.cancelAnimationFrame(fastFrameId);
-      window.cancelAnimationFrame(fullFrameId);
-      window.clearTimeout(fullRenderTimer);
+      cancelled = true;
+      if (previewRendererRef.current === schedulePreview) {
+        previewRendererRef.current = null;
+      }
+      worker?.terminate();
+      worker = null;
+      if (fullRenderTimeout) {
+        window.clearTimeout(fullRenderTimeout);
+      }
+      if (fallbackFrameId) {
+        window.cancelAnimationFrame(fallbackFrameId);
+      }
     };
-  }, [rasterProject, sourceImage, stageSize.height, stageSize.width]);
+  }, [previewCrop, sourceImage, stageSize.height, stageSize.width]);
+
+  React.useEffect(() => {
+    previewRendererRef.current?.(rasterProject);
+  }, [rasterProject]);
 
   React.useEffect(() => {
     if (!canvasRef.current || fabricCanvasRef.current) {
@@ -1324,7 +1816,9 @@ export const CanvasStage = React.forwardRef<
       }
 
       setTextLayers(
-        serializeCanvas(canvas, latestTextLayersRef.current, currentStageSize),
+        serializeCanvas(canvas, latestTextLayersRef.current, currentStageSize).map(
+          latestMapLayerFromWorkspaceRef.current,
+        ),
       );
     };
 
@@ -1443,12 +1937,13 @@ export const CanvasStage = React.forwardRef<
 
     project.textLayers.forEach((layer) => {
       const existing = objectMap.get(layer.id);
+      const workspaceLayer = mapLayerToWorkspace(layer);
 
       if (existing) {
-        applyLayerToTextbox(existing, layer, stageSize);
+        applyLayerToTextbox(existing, workspaceLayer, stageSize);
       } else {
         const textbox = new Textbox(layer.text) as EditorTextbox;
-        applyLayerToTextbox(textbox, layer, stageSize);
+        applyLayerToTextbox(textbox, workspaceLayer, stageSize);
         canvas.add(textbox);
       }
 
@@ -1463,7 +1958,7 @@ export const CanvasStage = React.forwardRef<
 
     canvas.requestRenderAll();
     isSyncingRef.current = false;
-  }, [project.crop.perspective, project.textLayers, stageSize]);
+  }, [mapLayerToWorkspace, project.textLayers, stageSize]);
 
   React.useEffect(() => {
     const canvas = fabricCanvasRef.current;
@@ -1540,6 +2035,10 @@ export const CanvasStage = React.forwardRef<
     }
 
     const handleMove = (event: PointerEvent) => {
+      if (viewportGestureActiveRef.current) {
+        return;
+      }
+
       const stageNode = captureRef.current;
 
       if (!stageNode) {
@@ -1573,14 +2072,13 @@ export const CanvasStage = React.forwardRef<
           localPt.y,
           ratioValue
         );
-        draftPerspectiveRef.current = next;
-        latestPerspectiveRef.current = next;
-        setDraftPerspective(next);
+        queuePerspectiveRender(next);
       }
     };
 
     const handleUp = () => {
       setDragCorner(null);
+      cancelPerspectiveRender();
 
       if (latestPerspectiveRef.current) {
         setCropPerspective(latestPerspectiveRef.current);
@@ -1599,6 +2097,8 @@ export const CanvasStage = React.forwardRef<
     };
   }, [
     dragCorner,
+    cancelPerspectiveRender,
+    queuePerspectiveRender,
     setCropPerspective,
     project.crop.presetId,
     project.crop.rotation,
@@ -1612,6 +2112,10 @@ export const CanvasStage = React.forwardRef<
     }
 
     const handleMove = (event: PointerEvent) => {
+      if (viewportGestureActiveRef.current) {
+        return;
+      }
+
       const stageNode = captureRef.current;
 
       if (!stageNode) {
@@ -1645,14 +2149,13 @@ export const CanvasStage = React.forwardRef<
           localPt.y,
           ratioValue
         );
-        draftPerspectiveRef.current = next;
-        latestPerspectiveRef.current = next;
-        setDraftPerspective(next);
+        queuePerspectiveRender(next);
       }
     };
 
     const handleUp = () => {
       setDragEdge(null);
+      cancelPerspectiveRender();
 
       if (latestPerspectiveRef.current) {
         setCropPerspective(latestPerspectiveRef.current);
@@ -1671,6 +2174,8 @@ export const CanvasStage = React.forwardRef<
     };
   }, [
     dragEdge,
+    cancelPerspectiveRender,
+    queuePerspectiveRender,
     setCropPerspective,
     project.crop.presetId,
     project.crop.rotation,
@@ -1684,6 +2189,10 @@ export const CanvasStage = React.forwardRef<
     }
 
     const handleMove = (event: PointerEvent) => {
+      if (viewportGestureActiveRef.current) {
+        return;
+      }
+
       const start = cropBoxDragStartRef.current;
       const stageNode = captureRef.current;
 
@@ -1755,14 +2264,13 @@ export const CanvasStage = React.forwardRef<
         },
       };
 
-      draftPerspectiveRef.current = next;
-      latestPerspectiveRef.current = next;
-      setDraftPerspective(next);
+      queuePerspectiveRender(next);
     };
 
     const handleUp = () => {
       setIsMovingCropBox(false);
       cropBoxDragStartRef.current = null;
+      cancelPerspectiveRender();
 
       if (latestPerspectiveRef.current) {
         setCropPerspective(latestPerspectiveRef.current);
@@ -1781,44 +2289,13 @@ export const CanvasStage = React.forwardRef<
     };
   }, [
     isMovingCropBox,
+    cancelPerspectiveRender,
+    queuePerspectiveRender,
     setCropPerspective,
     project.crop.rotation,
     project.crop.flipX,
     project.crop.flipY,
   ]);
-
-  React.useEffect(() => {
-    if (!panning) {
-      return;
-    }
-
-    const handleMove = (event: PointerEvent) => {
-      const origin = panOriginRef.current;
-
-      if (!origin) {
-        return;
-      }
-
-      queueViewport({
-        ...latestViewportRef.current,
-        offsetX: origin.offsetX + (event.clientX - origin.x),
-        offsetY: origin.offsetY + (event.clientY - origin.y),
-      });
-    };
-
-    const handleUp = () => {
-      setPanning(false);
-      panOriginRef.current = null;
-    };
-
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleUp, { once: true });
-
-    return () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
-    };
-  }, [panning, queueViewport]);
 
   const clipPath = React.useMemo(
     () =>
@@ -1859,10 +2336,10 @@ export const CanvasStage = React.forwardRef<
 
   const getVisibleTextLayer = React.useCallback(
     (layer: TextLayer): TextLayer => ({
-      ...layer,
+      ...mapLayerToWorkspace(layer),
       ...draftTextLayerUpdates[layer.id],
     }),
-    [draftTextLayerUpdates],
+    [draftTextLayerUpdates, mapLayerToWorkspace],
   );
 
   const commitTextLayerDraft = React.useCallback(
@@ -1877,9 +2354,9 @@ export const CanvasStage = React.forwardRef<
         return;
       }
 
-      updateTextLayer(layerId, updates);
+      updateTextLayerInWorkspace(layerId, updates);
     },
-    [updateTextLayer],
+    [updateTextLayerInWorkspace],
   );
 
   const startTextLayerMove = React.useCallback(
@@ -1906,6 +2383,10 @@ export const CanvasStage = React.forwardRef<
       let nextUpdates: Partial<TextLayer> = {};
 
       const handleMove = (moveEvent: PointerEvent) => {
+        if (viewportGestureActiveRef.current) {
+          return;
+        }
+
         moveEvent.preventDefault();
         const dxPct = ((moveEvent.clientX - startX) / rect.width) * 100;
         const dyPct = ((moveEvent.clientY - startY) / rect.height) * 100;
@@ -1914,19 +2395,17 @@ export const CanvasStage = React.forwardRef<
           yPct: clamp(startLayer.yPct + dyPct, 0, 100),
         };
 
-        setDraftTextLayerUpdates((current) => ({
-          ...current,
-          [layer.id]: {
-            ...current[layer.id],
-            ...nextUpdates,
-          },
-        }));
+        queueTextDraftRender(layer.id, nextUpdates);
       };
 
       const handleUp = () => {
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleUp);
-        commitTextLayerDraft(layer.id, nextUpdates);
+        cancelTextDraftRender();
+        commitTextLayerDraft(
+          layer.id,
+          viewportGestureActiveRef.current ? {} : nextUpdates,
+        );
       };
 
       window.addEventListener("pointermove", handleMove);
@@ -1934,7 +2413,9 @@ export const CanvasStage = React.forwardRef<
     },
     [
       commitTextLayerDraft,
+      cancelTextDraftRender,
       getVisibleTextLayer,
+      queueTextDraftRender,
       setSelectedTextId,
       stageSize.height,
       stageSize.width,
@@ -1965,6 +2446,10 @@ export const CanvasStage = React.forwardRef<
       let nextUpdates: Partial<TextLayer> = {};
 
       const handleMove = (moveEvent: PointerEvent) => {
+        if (viewportGestureActiveRef.current) {
+          return;
+        }
+
         moveEvent.preventDefault();
         const dxPct = ((moveEvent.clientX - startX) / rect.width) * 100;
         const dyPct = ((moveEvent.clientY - startY) / rect.height) * 100;
@@ -1973,19 +2458,17 @@ export const CanvasStage = React.forwardRef<
           fontSizePct: clamp(startLayer.fontSizePct + dyPct, 1.2, 42),
         };
 
-        setDraftTextLayerUpdates((current) => ({
-          ...current,
-          [layer.id]: {
-            ...current[layer.id],
-            ...nextUpdates,
-          },
-        }));
+        queueTextDraftRender(layer.id, nextUpdates);
       };
 
       const handleUp = () => {
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleUp);
-        commitTextLayerDraft(layer.id, nextUpdates);
+        cancelTextDraftRender();
+        commitTextLayerDraft(
+          layer.id,
+          viewportGestureActiveRef.current ? {} : nextUpdates,
+        );
       };
 
       window.addEventListener("pointermove", handleMove);
@@ -1993,7 +2476,9 @@ export const CanvasStage = React.forwardRef<
     },
     [
       commitTextLayerDraft,
+      cancelTextDraftRender,
       getVisibleTextLayer,
+      queueTextDraftRender,
       setSelectedTextId,
       stageSize.height,
       stageSize.width,
@@ -2001,31 +2486,25 @@ export const CanvasStage = React.forwardRef<
   );
 
   const resetViewport = React.useCallback(() => {
-    setViewport({
+    queueViewport({
       zoom: 1,
       offsetX: 0,
       offsetY: 0,
     });
-  }, []);
+    commitViewport();
+  }, [commitViewport, queueViewport]);
 
   const nudgeZoom = React.useCallback((delta: number) => {
-    setViewport((current) => {
-      let nextZoom = clamp(round(current.zoom + delta, 2), 0.6, 2.6);
+    const current = latestViewportRef.current;
+    let nextZoom = clamp(round(current.zoom + delta, 2), 0.6, 2.6);
 
-      if (Math.abs(nextZoom - 1.0) < 0.06) {
-        nextZoom = 1.0;
-      }
+    if (Math.abs(nextZoom - 1.0) < 0.06) {
+      nextZoom = 1.0;
+    }
 
-      if (nextZoom === 1) {
-        return { zoom: 1, offsetX: 0, offsetY: 0 };
-      }
-
-      return {
-        ...current,
-        zoom: nextZoom,
-      };
-    });
-  }, []);
+    queueViewport(zoomCanvasViewportAtPoint(current, nextZoom, { x: 0, y: 0 }));
+    commitViewport();
+  }, [commitViewport, queueViewport]);
 
   const handleViewportPointerDown = (
     event: React.PointerEvent<HTMLDivElement>,
@@ -2034,34 +2513,193 @@ export const CanvasStage = React.forwardRef<
       return;
     }
 
-    const target = event.target as HTMLElement;
+    if (event.pointerType === "touch") {
+      const pointers = activeTouchPointersRef.current;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
-    if (target.closest(".fabric-text-canvas")) {
-      return;
-    }
+      if (pointers.size >= 2) {
+        event.preventDefault();
+        event.stopPropagation();
+        viewportGestureActiveRef.current = true;
+        const [first, second] = [...pointers.values()];
+        const centre = getPointCentre(first, second);
+        pointerPinchRef.current = {
+          distance: Math.max(1, getPointDistance(first, second)),
+          viewport: latestViewportRef.current,
+          centre: getViewportPoint(centre.x, centre.y),
+        };
+        panOriginRef.current = null;
 
-    if (target.closest("button, input, textarea, select, label")) {
+        for (const pointerId of pointers.keys()) {
+          try {
+            event.currentTarget.setPointerCapture(pointerId);
+          } catch {
+            // A pointer may have ended between the event and capture request.
+          }
+        }
+        return;
+      }
+
+      const target = event.target as HTMLElement;
+      const editsCanvasObject = activeTab === "crop" || activeTab === "text";
+      const isControl = Boolean(
+        target.closest("button, input, textarea, select, label"),
+      );
+      const currentViewport = latestViewportRef.current;
+
+      if (!editsCanvasObject && !isControl && currentViewport.zoom > 1.01) {
+        event.preventDefault();
+        event.stopPropagation();
+        viewportGestureActiveRef.current = true;
+        viewportRectRef.current =
+          viewportSurfaceRef.current?.getBoundingClientRect() ?? null;
+        panOriginRef.current = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          offsetX: currentViewport.offsetX,
+          offsetY: currentViewport.offsetY,
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
       return;
     }
 
     const currentViewport = latestViewportRef.current;
-    // Disable panning close to 1.0 zoom to prevent jitter
-    const allowPointerPan =
-      spacePressed ||
-      (event.pointerType === "touch" && currentViewport.zoom > 1.05);
+    const allowPointerPan = spacePressed || event.button === 1;
 
     if (!allowPointerPan) {
       return;
     }
 
     event.preventDefault();
+    event.stopPropagation();
+    viewportGestureActiveRef.current = true;
+    viewportRectRef.current =
+      viewportSurfaceRef.current?.getBoundingClientRect() ?? null;
     panOriginRef.current = {
+      pointerId: event.pointerId,
       x: event.clientX,
       y: event.clientY,
       offsetX: currentViewport.offsetX,
       offsetY: currentViewport.offsetY,
     };
-    setPanning(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.style.cursor = "grabbing";
+  };
+
+  const handleViewportPointerMove = (
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    const coalesced = event.nativeEvent.getCoalescedEvents?.() ?? [];
+    const pointer = coalesced.length
+      ? coalesced[coalesced.length - 1]
+      : event.nativeEvent;
+
+    if (event.pointerType === "touch") {
+      const pointers = activeTouchPointersRef.current;
+      if (!pointers.has(event.pointerId)) {
+        return;
+      }
+
+      pointers.set(event.pointerId, {
+        x: pointer.clientX,
+        y: pointer.clientY,
+      });
+
+      if (pointers.size >= 2 && pointerPinchRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        const [first, second] = [...pointers.values()];
+        const distance = Math.max(1, getPointDistance(first, second));
+        const pinchScale = distance / pointerPinchRef.current.distance;
+        const centre = getPointCentre(first, second);
+        const currentCentre = getViewportPoint(centre.x, centre.y);
+        const zoomed = zoomCanvasViewportAtPoint(
+          pointerPinchRef.current.viewport,
+          pointerPinchRef.current.viewport.zoom * pinchScale,
+          pointerPinchRef.current.centre,
+        );
+
+        queueViewport(
+          translateCanvasViewport(zoomed, {
+            x: currentCentre.x - pointerPinchRef.current.centre.x,
+            y: currentCentre.y - pointerPinchRef.current.centre.y,
+          }),
+        );
+        return;
+      }
+    }
+
+    const origin = panOriginRef.current;
+    if (!origin || origin.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    queueViewport({
+      ...latestViewportRef.current,
+      offsetX: origin.offsetX + (pointer.clientX - origin.x),
+      offsetY: origin.offsetY + (pointer.clientY - origin.y),
+    });
+  };
+
+  const handleViewportPointerEnd = (
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    if (event.pointerType === "touch") {
+      const pointers = activeTouchPointersRef.current;
+      const wasViewportGesture = viewportGestureActiveRef.current;
+      pointers.delete(event.pointerId);
+
+      if (pointers.size >= 2) {
+        const [first, second] = [...pointers.values()];
+        const centre = getPointCentre(first, second);
+        pointerPinchRef.current = {
+          distance: Math.max(1, getPointDistance(first, second)),
+          viewport: latestViewportRef.current,
+          centre: getViewportPoint(centre.x, centre.y),
+        };
+        return;
+      }
+
+      pointerPinchRef.current = null;
+
+      if (pointers.size === 1 && wasViewportGesture) {
+        const [[pointerId, remaining]] = [...pointers.entries()];
+        const current = latestViewportRef.current;
+        panOriginRef.current = {
+          pointerId,
+          x: remaining.x,
+          y: remaining.y,
+          offsetX: current.offsetX,
+          offsetY: current.offsetY,
+        };
+        return;
+      }
+
+      if (pointers.size === 0 && wasViewportGesture) {
+        panOriginRef.current = null;
+        commitViewport();
+        // Child tool listeners also finish on this pointerup. Keep the guard
+        // set until native propagation completes so a pinch cannot commit a
+        // half-moved crop or text layer.
+        queueMicrotask(() => {
+          viewportGestureActiveRef.current = false;
+        });
+      }
+      return;
+    }
+
+    if (panOriginRef.current?.pointerId !== event.pointerId) {
+      return;
+    }
+
+    panOriginRef.current = null;
+    viewportGestureActiveRef.current = false;
+    event.currentTarget.style.cursor = "";
+    commitViewport();
   };
 
   const handleViewportWheel = (event: React.WheelEvent<HTMLDivElement>) => {
@@ -2069,127 +2707,31 @@ export const CanvasStage = React.forwardRef<
       return;
     }
 
-    // Allow browser zoom shortcuts (Ctrl/Cmd + wheel) to behave normally.
-    if (event.ctrlKey || event.metaKey) {
+    // Command-wheel is reserved for the browser. Ctrl-wheel is also how
+    // browsers report a trackpad pinch, so it remains an editor gesture.
+    if (event.metaKey) {
       return;
     }
 
     event.preventDefault();
 
     const currentViewport = latestViewportRef.current;
-    const zoomDelta = event.deltaY < 0 ? 0.08 : -0.08;
-    const nextZoom = clamp(
-      round(currentViewport.zoom + zoomDelta, 2),
-      0.6,
-      2.6,
+    const pageSize = viewportSurfaceRef.current?.clientHeight ?? 800;
+    const deltaPixels =
+      event.deltaY *
+      (event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? pageSize
+          : 1);
+    const sensitivity = event.ctrlKey ? 0.008 : 0.0018;
+    const nextZoom = currentViewport.zoom * Math.exp(-deltaPixels * sensitivity);
+    const focalPoint = getViewportPoint(event.clientX, event.clientY);
+
+    queueViewport(
+      zoomCanvasViewportAtPoint(currentViewport, nextZoom, focalPoint),
     );
-
-    queueViewport({
-      ...currentViewport,
-      zoom: nextZoom,
-    });
-  };
-
-  const handleViewportTouchStart = (
-    event: React.TouchEvent<HTMLDivElement>,
-  ) => {
-    if (!project.imageSrc) {
-      return;
-    }
-
-    const target = event.target as HTMLElement;
-    if (target.closest(".fabric-text-canvas")) {
-      return;
-    }
-
-    if (target.closest("button, input, textarea, select, label")) {
-      return;
-    }
-
-    const currentViewport = latestViewportRef.current;
-
-    if (event.touches.length === 2) {
-      const [first, second] = [event.touches[0], event.touches[1]];
-      touchPinchRef.current = {
-        distance: Math.max(1, getTouchDistance(first, second)),
-        zoom: currentViewport.zoom,
-      };
-      touchPanOriginRef.current = null;
-      return;
-    }
-
-    if (event.touches.length === 1 && currentViewport.zoom > 1.01) {
-      const touch = event.touches[0];
-      touchPanOriginRef.current = {
-        x: touch.clientX,
-        y: touch.clientY,
-        offsetX: currentViewport.offsetX,
-        offsetY: currentViewport.offsetY,
-      };
-    }
-  };
-
-  const handleViewportTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (!project.imageSrc) {
-      return;
-    }
-
-    if (event.touches.length === 2 && touchPinchRef.current) {
-      event.preventDefault();
-      const [first, second] = [event.touches[0], event.touches[1]];
-      const distance = Math.max(1, getTouchDistance(first, second));
-      const pinchScale = distance / touchPinchRef.current.distance;
-      const nextZoom = clamp(
-        round(touchPinchRef.current.zoom * pinchScale, 2),
-        0.6,
-        2.6,
-      );
-
-      queueViewport({
-        ...latestViewportRef.current,
-        zoom: nextZoom,
-      });
-      return;
-    }
-
-    if (event.touches.length === 1 && touchPanOriginRef.current) {
-      event.preventDefault();
-      const touch = event.touches[0];
-      queueViewport({
-        ...latestViewportRef.current,
-        offsetX:
-          touchPanOriginRef.current.offsetX +
-          (touch.clientX - touchPanOriginRef.current.x),
-        offsetY:
-          touchPanOriginRef.current.offsetY +
-          (touch.clientY - touchPanOriginRef.current.y),
-      });
-    }
-  };
-
-  const handleViewportTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (event.touches.length === 0) {
-      touchPinchRef.current = null;
-      touchPanOriginRef.current = null;
-      return;
-    }
-
-    if (event.touches.length === 1) {
-      touchPinchRef.current = null;
-      const currentViewport = latestViewportRef.current;
-      if (currentViewport.zoom <= 1.01) {
-        touchPanOriginRef.current = null;
-        return;
-      }
-
-      const touch = event.touches[0];
-      touchPanOriginRef.current = {
-        x: touch.clientX,
-        y: touch.clientY,
-        offsetX: currentViewport.offsetX,
-        offsetY: currentViewport.offsetY,
-      };
-    }
+    scheduleViewportCommit();
   };
 
   return (
@@ -2233,6 +2775,10 @@ export const CanvasStage = React.forwardRef<
               <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-[var(--text-muted)]">
                 PNG, JPG, WEBP up to 50MB
               </p>
+              <p className="mx-auto max-w-sm text-xs leading-5 text-[var(--text-muted)]">
+                Your photo stays in this browser while you apply film looks,
+                color adjustments, grain, crops, overlays, and text.
+              </p>
             </div>
             <div className="mx-auto flex h-11 items-center justify-center border border-[var(--border)] bg-[var(--surface)] px-5 text-[11px] uppercase tracking-[0.28em] text-[var(--text-primary)]">
               Click To Upload
@@ -2241,6 +2787,7 @@ export const CanvasStage = React.forwardRef<
         </button>
       ) : (
         <div
+          ref={viewportSurfaceRef}
           className="relative flex h-full w-full items-center justify-center px-3 py-3 sm:px-6 sm:py-6 lg:px-10 lg:py-10"
           onWheel={handleViewportWheel}
         >
@@ -2260,18 +2807,17 @@ export const CanvasStage = React.forwardRef<
           </div>
 
           <div
+            ref={viewportTransformRef}
             className={cn(
               "relative flex items-center justify-center [will-change:transform]",
               project.imageSrc && spacePressed && "cursor-grab",
-              panning && "cursor-grabbing",
             )}
             onPointerDownCapture={handleViewportPointerDown}
-            onTouchStart={handleViewportTouchStart}
-            onTouchMove={handleViewportTouchMove}
-            onTouchEnd={handleViewportTouchEnd}
-            onTouchCancel={handleViewportTouchEnd}
+            onPointerMoveCapture={handleViewportPointerMove}
+            onPointerUpCapture={handleViewportPointerEnd}
+            onPointerCancelCapture={handleViewportPointerEnd}
             style={{
-              transform: `translate3d(${Math.round(viewport.offsetX)}px, ${Math.round(viewport.offsetY)}px, 0) scale(${viewport.zoom})`,
+              transform: canvasViewportTransform(viewport),
               transformOrigin: "center center",
               touchAction: "none",
               backfaceVisibility: "hidden",
@@ -2287,7 +2833,7 @@ export const CanvasStage = React.forwardRef<
               <div className="absolute inset-0" style={transformStyle}>
                 <div
                   className="absolute inset-0 overflow-hidden"
-                  style={{ clipPath }}
+                  style={{ clipPath: activeTab === "crop" ? clipPath : undefined }}
                 >
                   <div className="absolute inset-0 isolate overflow-hidden">
                     <canvas
@@ -2320,6 +2866,16 @@ export const CanvasStage = React.forwardRef<
                               startTextLayerMove(event, layer)
                             }
                             onDoubleClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setSelectedTextId(layer.id);
+                              setEditingTextId(layer.id);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key !== "Enter" && event.key !== " ") {
+                                return;
+                              }
+
                               event.preventDefault();
                               event.stopPropagation();
                               setSelectedTextId(layer.id);
@@ -2362,7 +2918,7 @@ export const CanvasStage = React.forwardRef<
                                 onPointerDown={(event) =>
                                   startTextLayerResize(event, layer)
                                 }
-                                className="absolute -bottom-2 -right-2 size-4 cursor-nwse-resize border border-black bg-[var(--accent)] shadow-[0_0_0_1px_rgba(245,158,11,0.35)]"
+                                className="absolute -bottom-3 -right-3 size-6 cursor-nwse-resize rounded-full border border-black bg-[var(--accent)] shadow-[0_0_0_1px_rgba(245,158,11,0.35)] sm:-bottom-2 sm:-right-2 sm:size-4 sm:rounded-none"
                               />
                             ) : null}
                           </div>
@@ -2524,7 +3080,8 @@ export const CanvasStage = React.forwardRef<
                           startCropDrag();
                           setDragCorner(corner);
                         }}
-                        className="absolute z-40 size-4 -translate-x-1/2 -translate-y-1/2 border border-black bg-[var(--accent)] shadow-[0_0_0_1px_rgba(245,158,11,0.35)]"
+                        aria-label={`Resize crop from ${corner} corner`}
+                        className="absolute z-40 size-6 -translate-x-1/2 -translate-y-1/2 rounded-full border border-black bg-[var(--accent)] shadow-[0_0_0_1px_rgba(245,158,11,0.35)] sm:size-4 sm:rounded-none"
                         style={{ left: `${point.x}%`, top: `${point.y}%` }}
                       />
                     ))}
@@ -2581,7 +3138,7 @@ export const CanvasStage = React.forwardRef<
 
           <Popover
             open={Boolean(
-              selectedTextLayer && editingTextId === selectedTextId,
+              selectedTextLayer && effectiveEditingTextId === selectedTextId,
             )}
             onOpenChange={handleTextPopoverOpenChange}
           >
@@ -2593,7 +3150,10 @@ export const CanvasStage = React.forwardRef<
               />
             </PopoverAnchor>
             {selectedTextLayer ? (
-              <PopoverContent align="end" className="w-[min(92vw,380px)]">
+              <PopoverContent
+                align="end"
+                className="max-h-[min(80dvh,720px)] w-[min(92vw,380px)] overflow-y-auto overscroll-contain rounded-2xl sm:rounded-none"
+              >
                 <div className="space-y-5">
                   <div className="flex items-center justify-between gap-4">
                     <div>
@@ -2740,7 +3300,8 @@ export const CanvasStage = React.forwardRef<
                         <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
                           {Math.round(
                             fromPercentage(
-                              selectedTextLayer.fontSizePct,
+                              selectedWorkspaceTextLayer?.fontSizePct ??
+                                selectedTextLayer.fontSizePct,
                               stageSize.height,
                             ),
                           )}
@@ -2751,9 +3312,12 @@ export const CanvasStage = React.forwardRef<
                         min={1.2}
                         max={42}
                         step={0.2}
-                        value={[selectedTextLayer.fontSizePct]}
+                        value={[
+                          selectedWorkspaceTextLayer?.fontSizePct ??
+                            selectedTextLayer.fontSizePct,
+                        ]}
                         onValueChange={([value]) =>
-                          updateTextLayer(selectedTextLayer.id, {
+                          updateTextLayerInWorkspace(selectedTextLayer.id, {
                             fontSizePct: value,
                             letterSpacing: pixelsToCharSpacing(
                               selectedTextTracking,
@@ -2777,9 +3341,12 @@ export const CanvasStage = React.forwardRef<
                         min={12}
                         max={100}
                         step={1}
-                        value={[selectedTextLayer.widthPct]}
+                        value={[
+                          selectedWorkspaceTextLayer?.widthPct ??
+                            selectedTextLayer.widthPct,
+                        ]}
                         onValueChange={([value]) =>
-                          updateTextLayer(selectedTextLayer.id, {
+                          updateTextLayerInWorkspace(selectedTextLayer.id, {
                             widthPct: value,
                           })
                         }
@@ -2907,21 +3474,21 @@ export const CanvasStage = React.forwardRef<
 
       {project.imageSrc ? (
         <>
-          <div className="pointer-events-none absolute right-3 z-10 flex items-center gap-2 bottom-[calc(0.5rem+env(safe-area-inset-bottom))] sm:bottom-6 sm:right-6 sm:gap-3">
+          <div className="pointer-events-none absolute right-3 z-10 hidden items-center gap-2 sm:bottom-6 sm:right-6 sm:flex sm:gap-3">
             <div className="hidden border border-[var(--border)] bg-[rgba(10,10,10,0.82)] px-3 py-2 font-mono text-[11px] uppercase tracking-[0.24em] text-[var(--text-muted)] sm:block">
               {Math.round(stageSize.width)} x {Math.round(stageSize.height)}
             </div>
             <button
               type="button"
               onClick={onRequestUpload}
-              className="pointer-events-auto flex items-center gap-2 border border-[var(--border)] bg-[rgba(10,10,10,0.82)] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.2em] text-[var(--text-primary)] transition-colors hover:border-[rgba(245,158,11,0.4)] hover:text-[var(--accent)] sm:text-[11px] sm:tracking-[0.24em]"
+              className="pointer-events-auto flex min-w-0 items-center gap-2 overflow-hidden border border-[var(--border)] bg-[rgba(10,10,10,0.82)] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--text-primary)] transition-colors hover:border-[rgba(245,158,11,0.4)] hover:text-[var(--accent)] sm:text-[11px] sm:tracking-[0.16em]"
             >
               <Upload className="size-3.5" />
               Replace
             </button>
           </div>
 
-          <div className="absolute left-3 right-3 z-10 flex items-center justify-start gap-2 overflow-x-auto whitespace-nowrap border border-[var(--border)] bg-[rgba(10,10,10,0.88)] px-2 py-2 bottom-[calc(0.5rem+env(safe-area-inset-bottom))] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:bottom-6 sm:left-1/2 sm:right-auto sm:justify-center sm:-translate-x-1/2">
+          <div className="scrollbar-none absolute bottom-3 left-1/2 z-10 flex w-max max-w-[calc(100%-1.5rem)] -translate-x-1/2 touch-pan-x items-center justify-start gap-1 overflow-x-auto whitespace-nowrap rounded-full border border-[var(--border)] bg-[#0a0a0a] px-1.5 py-1.5 shadow-[0_10px_35px_rgba(0,0,0,0.45)] sm:bottom-6 sm:gap-2 sm:rounded-none sm:bg-[rgba(10,10,10,0.9)] sm:px-2 sm:py-2 sm:backdrop-blur-xl">
             {selectedTextLayer ? (
               <Button
                 size="sm"
@@ -2939,7 +3506,7 @@ export const CanvasStage = React.forwardRef<
               <Button
                 size="sm"
                 variant={
-                  editingTextId === selectedTextLayer.id ? "amber" : "outline"
+                  effectiveEditingTextId === selectedTextLayer.id ? "amber" : "outline"
                 }
                 onClick={() =>
                   setEditingTextId((current) => {
@@ -2958,7 +3525,10 @@ export const CanvasStage = React.forwardRef<
             <Button size="sm" variant="ghost" onClick={() => nudgeZoom(-0.1)}>
               -
             </Button>
-            <div className="min-w-[88px] px-3 text-center font-mono text-[11px] uppercase tracking-[0.22em] text-[var(--text-muted)]">
+            <div
+              ref={zoomReadoutRef}
+              className="min-w-[58px] px-1 text-center font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)] sm:min-w-[88px] sm:px-3 sm:text-[11px] sm:tracking-[0.22em]"
+            >
               {Math.round(viewport.zoom * 100)}%
             </div>
             <Button size="sm" variant="ghost" onClick={() => nudgeZoom(0.1)}>

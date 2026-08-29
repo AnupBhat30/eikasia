@@ -5,6 +5,7 @@ import {
   Aperture,
   Crop,
   Layers3,
+  Pencil,
   RotateCcw,
   Sparkles,
   Type,
@@ -27,7 +28,6 @@ import {
   LIGHT_LEAK_PRESETS,
   TEXT_PRESETS,
   getLookDefinition,
-  getLookFilterId,
 } from "@/components/editor/constants";
 import { useEditor } from "@/components/editor/editor-context";
 import type {
@@ -52,6 +52,14 @@ const LOOK_CATEGORY_LABELS: Record<LookDefinition["category"], string> = {
   chroma: "Chroma Pop & Golden Glow",
 };
 
+const LOOK_GROUPS = [
+  { id: "fujifilm", label: "Fuji", looks: FUJIFILM_LOOKS },
+  { id: "analog", label: "Film", looks: ANALOG_FILM_LOOKS },
+  { id: "cinema", label: "Cinema", looks: CINEMA_LOOKS },
+  { id: "colorful", label: "Pop", looks: COLORFUL_LOOKS },
+  { id: "chroma", label: "Glow", looks: CHROMA_LOOKS },
+] as const;
+
 function PanelSection({
   icon: Icon,
   title,
@@ -64,8 +72,8 @@ function PanelSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-4 border-b border-[var(--border)] pb-6 last:border-b-0 last:pb-0">
-      <header className="space-y-2">
+    <section className="editor-panel-section space-y-4 border-b border-[var(--border)] pb-6 last:border-b-0 last:pb-0">
+      <header className="editor-panel-section-header space-y-2">
         <div className="flex items-center gap-3">
           <span className="flex size-8 items-center justify-center border border-[var(--border)] bg-[rgba(255,255,255,0.02)]">
             <Icon className="size-4 text-[var(--accent)]" />
@@ -75,7 +83,7 @@ function PanelSection({
           </h3>
         </div>
         {detail ? (
-          <p className="max-w-[32ch] text-sm leading-6 text-[var(--text-muted)]">
+          <p className="editor-panel-section-detail max-w-[32ch] text-sm leading-6 text-[var(--text-muted)]">
             {detail}
           </p>
         ) : null}
@@ -85,16 +93,14 @@ function PanelSection({
   );
 }
 
-function ToneCard({
+const ToneCard = React.memo(function ToneCard({
   look,
   active,
-  acrosChannel,
   disabled,
   onSelect,
 }: {
   look: LookDefinition;
   active: boolean;
-  acrosChannel: string;
   disabled: boolean;
   onSelect: (lookId: string) => void;
 }) {
@@ -120,21 +126,6 @@ function ToneCard({
           className="absolute inset-0"
           style={{ backgroundImage: look.thumbnail }}
         />
-        <span
-          className="absolute inset-0"
-          style={{
-            backgroundImage: look.thumbnail,
-            opacity: look.renderRecipe.layerOpacity,
-            mixBlendMode:
-              look.renderRecipe.layerBlendMode === "normal"
-                ? "normal"
-                : look.renderRecipe.layerBlendMode,
-            filter: `${look.cssFilter} url(#${getLookFilterId(
-              look.id,
-              look.id === "acros" ? (acrosChannel as never) : "neutral",
-            )})`,
-          }}
-        />
         {look.renderRecipe.washes.map((wash, index) => (
           <span
             key={`${look.id}-wash-${index}`}
@@ -159,7 +150,7 @@ function ToneCard({
       </span>
     </button>
   );
-}
+});
 
 function formatAdjustmentValue(control: AdjustmentControlDefinition, value: number) {
   if (control.suffix === "K") {
@@ -214,7 +205,7 @@ function AdjustmentSliderRow({
   );
 }
 
-function FiltersInspector() {
+function FiltersInspector({ compact = false }: { compact?: boolean }) {
   const {
     project,
     setLook,
@@ -222,6 +213,107 @@ function FiltersInspector() {
     setAcrosChannel,
   } = useEditor();
   const selectedLook = getLookDefinition(project.activeLookId);
+  const initialGroup =
+    LOOK_GROUPS.find((group) =>
+      group.looks.some((look) => look.id === project.activeLookId),
+    )?.id ?? LOOK_GROUPS[0].id;
+  const [activeGroupId, setActiveGroupId] = React.useState(initialGroup);
+  const activeGroup =
+    LOOK_GROUPS.find((group) => group.id === activeGroupId) ?? LOOK_GROUPS[0];
+
+  if (compact) {
+    return (
+      <div className="space-y-5">
+        <PanelSection
+          icon={Wand2}
+          title="Film looks"
+          detail="Choose a family, then swipe through its looks."
+        >
+          <div className="scrollbar-none -mx-3 touch-pan-x overflow-x-auto px-3">
+            <div className="flex w-max gap-2 pr-3">
+              {LOOK_GROUPS.map((group) => (
+                <button
+                  key={group.id}
+                  type="button"
+                  aria-pressed={activeGroup.id === group.id}
+                  onClick={() => setActiveGroupId(group.id)}
+                  className={cn(
+                    "min-h-9 rounded-full border px-4 text-[10px] uppercase tracking-[0.16em] transition-colors",
+                    activeGroup.id === group.id
+                      ? "border-[var(--accent)] bg-[var(--accent)] text-black"
+                      : "border-[var(--border)] bg-[rgba(255,255,255,0.03)] text-[var(--text-muted)]",
+                  )}
+                >
+                  {group.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="scrollbar-none -mx-3 touch-pan-x snap-x snap-mandatory overflow-x-auto px-3 pb-1">
+            <div className="flex w-max gap-3 pr-5">
+              {activeGroup.looks.map((look) => (
+                <div key={look.id} className="snap-start">
+                  <ToneCard
+                    look={look}
+                    active={project.activeLookId === look.id}
+                    disabled={false}
+                    onSelect={setLook}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </PanelSection>
+
+        <PanelSection icon={Aperture} title="Look strength">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-xs text-[var(--text-primary)]">
+                  {selectedLook?.name ?? "Original"}
+                </p>
+                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                  {project.filterIntensity}% intensity
+                </p>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setLook(null)}>
+                Original
+              </Button>
+            </div>
+
+            <Slider
+              min={0}
+              max={100}
+              step={1}
+              value={[project.filterIntensity]}
+              onValueChange={([value]) => setFilterIntensity(value)}
+            />
+
+            {project.activeLookId === "acros" ? (
+              <Select
+                value={project.acrosChannel}
+                onValueChange={(value) =>
+                  setAcrosChannel(value as typeof project.acrosChannel)
+                }
+              >
+                <SelectTrigger aria-label="Acros channel">
+                  <SelectValue placeholder="Choose Acros channel" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ACROS_CHANNEL_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
+          </div>
+        </PanelSection>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -237,7 +329,6 @@ function FiltersInspector() {
                 key={look.id}
                 look={look}
                 active={project.activeLookId === look.id}
-                acrosChannel={project.acrosChannel}
                 disabled={false}
                 onSelect={setLook}
               />
@@ -258,7 +349,6 @@ function FiltersInspector() {
                 key={look.id}
                 look={look}
                 active={project.activeLookId === look.id}
-                acrosChannel={project.acrosChannel}
                 disabled={false}
                 onSelect={setLook}
               />
@@ -279,7 +369,6 @@ function FiltersInspector() {
                 key={look.id}
                 look={look}
                 active={project.activeLookId === look.id}
-                acrosChannel={project.acrosChannel}
                 disabled={false}
                 onSelect={setLook}
               />
@@ -300,7 +389,6 @@ function FiltersInspector() {
                 key={look.id}
                 look={look}
                 active={project.activeLookId === look.id}
-                acrosChannel={project.acrosChannel}
                 disabled={false}
                 onSelect={setLook}
               />
@@ -321,7 +409,6 @@ function FiltersInspector() {
                 key={look.id}
                 look={look}
                 active={project.activeLookId === look.id}
-                acrosChannel={project.acrosChannel}
                 disabled={false}
                 onSelect={setLook}
               />
@@ -408,39 +495,47 @@ function FiltersInspector() {
   );
 }
 
-function AdjustmentsInspector() {
+function AdjustmentsInspector({ compact = false }: { compact?: boolean }) {
   const { project, setAdjustment, resetAdjustment } = useEditor();
+
+  const groups = ADJUSTMENT_GROUPS.map((group) => (
+    <AccordionItem key={group.id} value={group.id}>
+      <AccordionTrigger>{group.label}</AccordionTrigger>
+      <AccordionContent>
+        <div className="space-y-1">
+          {group.controls.map((control) => (
+            <AdjustmentSliderRow
+              key={control.key}
+              control={control}
+              value={project.adjustments[control.key]}
+              disabled={false}
+              onChange={(value) => setAdjustment(control.key, value)}
+              onReset={() => resetAdjustment(control.key)}
+            />
+          ))}
+        </div>
+      </AccordionContent>
+    </AccordionItem>
+  ));
 
   return (
     <PanelSection
       icon={Aperture}
       title="Manual Adjustments"
-      detail="Exposure shaping, color temperature, detail emphasis, and analog finishing controls."
+      detail="Non-destructive offsets layered above the current filter, preserved when looks change."
     >
-      <Accordion
-        type="multiple"
-        defaultValue={ADJUSTMENT_GROUPS.map((group) => group.id)}
-      >
-        {ADJUSTMENT_GROUPS.map((group) => (
-          <AccordionItem key={group.id} value={group.id}>
-            <AccordionTrigger>{group.label}</AccordionTrigger>
-            <AccordionContent>
-              <div className="space-y-1">
-                {group.controls.map((control) => (
-                  <AdjustmentSliderRow
-                    key={control.key}
-                    control={control}
-                    value={project.adjustments[control.key]}
-                    disabled={false}
-                    onChange={(value) => setAdjustment(control.key, value)}
-                    onReset={() => resetAdjustment(control.key)}
-                  />
-                ))}
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        ))}
-      </Accordion>
+      {compact ? (
+        <Accordion type="single" collapsible defaultValue={ADJUSTMENT_GROUPS[0]?.id}>
+          {groups}
+        </Accordion>
+      ) : (
+        <Accordion
+          type="multiple"
+          defaultValue={ADJUSTMENT_GROUPS.map((group) => group.id)}
+        >
+          {groups}
+        </Accordion>
+      )}
     </PanelSection>
   );
 }
@@ -504,7 +599,13 @@ function createCustomTextLayer(
   };
 }
 
-function TextInspector() {
+function TextInspector({
+  compact = false,
+  onRequestEditSelectedText,
+}: {
+  compact?: boolean;
+  onRequestEditSelectedText?: () => void;
+}) {
   const {
     project,
     selectedTextId,
@@ -567,16 +668,19 @@ function TextInspector() {
           >
             Add Text
           </Button>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className={cn("grid gap-3 sm:grid-cols-2", compact ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" : "grid-cols-1")}>
             {TEXT_PRESETS.map((preset) => (
               <button
                 key={preset.id}
                 type="button"
                 disabled={!hasImage}
                 onClick={() => handleAddPreset(preset.id)}
-                className="group min-h-[92px] border border-[var(--border)] bg-[rgba(255,255,255,0.02)] p-3 text-left transition-colors hover:border-[rgba(245,158,11,0.45)] hover:bg-[rgba(245,158,11,0.04)] disabled:opacity-40"
+                className={cn(
+                  "group border border-[var(--border)] bg-[rgba(255,255,255,0.02)] p-3 text-left transition-colors hover:border-[rgba(245,158,11,0.45)] hover:bg-[rgba(245,158,11,0.04)] disabled:opacity-40",
+                  compact ? "min-h-[78px]" : "min-h-[92px]",
+                )}
               >
-                <span className="block text-[10px] uppercase tracking-[0.18em] leading-4 text-[var(--text-primary)] sm:text-[11px] sm:tracking-[0.26em]">
+                <span className="block min-w-0 break-words text-[9px] uppercase leading-4 tracking-[0.1em] [overflow-wrap:anywhere] text-[var(--text-primary)] sm:text-[10px] sm:tracking-[0.16em]">
                   {preset.name}
                 </span>
                 <span className="mt-3 block text-xs leading-5 text-[var(--text-muted)]">
@@ -617,13 +721,26 @@ function TextInspector() {
                     {layer.text}
                   </p>
                 </button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => removeTextLayer(layer.id)}
-                >
-                  Remove
-                </Button>
+                <div className="flex shrink-0 items-center gap-1">
+                  {selectedTextId === layer.id && onRequestEditSelectedText ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label="Edit selected text"
+                      onClick={onRequestEditSelectedText}
+                    >
+                      <Pencil className="size-3.5" />
+                      <span className="hidden min-[390px]:inline">Edit</span>
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => removeTextLayer(layer.id)}
+                  >
+                    Remove
+                  </Button>
+                </div>
               </div>
             ))
           ) : (
@@ -668,7 +785,7 @@ function OverlayPresetButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "border px-2 py-3 text-center text-[10px] uppercase tracking-[0.14em] leading-4 transition-colors disabled:opacity-40 sm:px-3 sm:text-[11px] sm:tracking-[0.24em]",
+        "min-w-0 overflow-hidden break-words border px-2 py-3 text-center text-[9px] uppercase leading-4 tracking-[0.1em] [overflow-wrap:anywhere] transition-colors disabled:opacity-40 sm:px-3 sm:text-[10px] sm:tracking-[0.16em]",
         active
           ? "border-[var(--accent)] bg-[rgba(245,158,11,0.08)] text-[var(--accent)]"
           : "border-[var(--border)] bg-[rgba(255,255,255,0.02)] text-[var(--text-muted)] hover:border-[rgba(245,158,11,0.45)] hover:text-[var(--text-primary)]",
@@ -681,6 +798,7 @@ function OverlayPresetButton({
 
 function OverlaysInspector() {
   const { project, upsertOverlay, removeOverlay } = useEditor();
+  const hasImage = Boolean(project.imageSrc);
 
   const activeOverlay = React.useMemo(
     () => ({
@@ -709,7 +827,7 @@ function OverlaysInspector() {
       <PanelSection
         icon={Layers3}
         title="Film Grain"
-        detail="SVG turbulence overlays with blend modes tuned for subtle or gritty analog texture."
+        detail="Stable seeded film texture with blend modes tuned for subtle or gritty analog grain."
       >
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {GRAIN_PRESETS.map((preset) => (
@@ -717,11 +835,21 @@ function OverlaysInspector() {
               key={preset.id}
               label={preset.name}
               active={activeOverlay.grain?.presetId === preset.id}
-              disabled={false}
+              disabled={!hasImage}
               onClick={() => addOverlayPreset(preset)}
             />
           ))}
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={
+            !activeOverlay.grain && project.adjustments.grainAmount <= 0
+          }
+          onClick={() => removeOverlay(undefined, "grain")}
+        >
+          Remove Grain
+        </Button>
       </PanelSection>
 
       <PanelSection
@@ -735,7 +863,7 @@ function OverlaysInspector() {
               key={preset.id}
               label={preset.name}
               active={activeOverlay.lightLeak?.presetId === preset.id}
-              disabled={false}
+              disabled={!hasImage}
               onClick={() => addOverlayPreset(preset)}
             />
           ))}
@@ -743,6 +871,7 @@ function OverlaysInspector() {
         <Button
           variant="ghost"
           size="sm"
+          disabled={!activeOverlay.lightLeak}
           onClick={() => removeOverlay(undefined, "lightLeak")}
         >
           Clear Leak
@@ -760,6 +889,7 @@ function OverlaysInspector() {
           </p>
           <Button
             size="sm"
+            disabled={!hasImage}
             variant={activeOverlay.flare ? "amber" : "outline"}
             onClick={() =>
               activeOverlay.flare
@@ -835,7 +965,7 @@ function OverlaysInspector() {
               key={preset.id}
               label={preset.name}
               active={activeOverlay.border?.presetId === preset.id}
-              disabled={false}
+              disabled={!hasImage}
               onClick={() => addOverlayPreset(preset)}
             />
           ))}
@@ -843,6 +973,7 @@ function OverlaysInspector() {
         <Button
           variant="ghost"
           size="sm"
+          disabled={!activeOverlay.border}
           onClick={() => removeOverlay(undefined, "border")}
         >
           Remove Border
@@ -865,6 +996,7 @@ function OverlaysInspector() {
           </div>
           <Button
             size="sm"
+            disabled={!hasImage}
             variant={activeOverlay.dust ? "amber" : "outline"}
             onClick={() =>
               activeOverlay.dust
@@ -880,9 +1012,10 @@ function OverlaysInspector() {
   );
 }
 
-function CropInspector() {
+function CropInspector({ compact = false }: { compact?: boolean }) {
   const {
     project,
+    setActiveTab,
     setCropPreset,
     setCropRotation,
     toggleFlip,
@@ -933,7 +1066,7 @@ function CropInspector() {
             />
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className={cn("grid gap-3 sm:grid-cols-2", compact ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" : "grid-cols-1")}>
             <Button
               variant={project.crop.flipX ? "amber" : "outline"}
               onClick={() => toggleFlip("x")}
@@ -950,11 +1083,12 @@ function CropInspector() {
             </Button>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className={cn("grid gap-3 sm:grid-cols-2", compact ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" : "grid-cols-1")}>
             <Button
               variant="ghost"
               onClick={() => setCropRotation(0)}
               size="sm"
+              className="w-full px-1 text-[9px] tracking-[0.08em] sm:px-2 sm:text-[10px] sm:tracking-[0.12em]"
             >
               Straighten
             </Button>
@@ -962,6 +1096,7 @@ function CropInspector() {
               variant="ghost"
               onClick={resetCrop}
               size="sm"
+              className="w-full px-1 text-[9px] tracking-[0.08em] sm:px-2 sm:text-[10px] sm:tracking-[0.12em]"
             >
               Reset
             </Button>
@@ -976,23 +1111,54 @@ function CropInspector() {
               into a perspective-correct or off-axis frame.
             </p>
           </div>
+
+          <div className="space-y-2">
+            <Button
+              variant="amber"
+              size="sm"
+              className="w-full"
+              onClick={() => setActiveTab("filters")}
+            >
+              Done — Use Crop
+            </Button>
+            <p className="text-center text-[10px] leading-4 tracking-[0.08em] text-[var(--text-muted)]">
+              The workspace will resize to this frame. Text outside it stays
+              clipped and will not be exported.
+            </p>
+          </div>
         </div>
       </PanelSection>
     </div>
   );
 }
 
-export function InspectorPanel({ className }: { className?: string }) {
+export function InspectorPanel({
+  className,
+  compact = false,
+  onRequestEditSelectedText,
+}: {
+  className?: string;
+  compact?: boolean;
+  onRequestEditSelectedText?: () => void;
+}) {
   const { activeTab } = useEditor();
 
   return (
-    <div className={cn("min-h-0 h-full overflow-y-auto overscroll-contain", className)}>
-      <div className="space-y-6 p-4 pb-6 sm:p-5">
-        {activeTab === "filters" ? <FiltersInspector /> : null}
-        {activeTab === "adjustments" ? <AdjustmentsInspector /> : null}
-        {activeTab === "text" ? <TextInspector /> : null}
+    <div
+      data-compact={compact}
+      className={cn("scrollbar-gutter-stable min-h-0 h-full overflow-y-auto overscroll-contain", className)}
+    >
+      <div className={cn("space-y-6", compact ? "p-3 pb-10" : "p-4 pb-6 sm:p-5")}>
+        {activeTab === "filters" ? <FiltersInspector compact={compact} /> : null}
+        {activeTab === "adjustments" ? <AdjustmentsInspector compact={compact} /> : null}
+        {activeTab === "text" ? (
+          <TextInspector
+            compact={compact}
+            onRequestEditSelectedText={onRequestEditSelectedText}
+          />
+        ) : null}
         {activeTab === "overlays" ? <OverlaysInspector /> : null}
-        {activeTab === "crop" ? <CropInspector /> : null}
+        {activeTab === "crop" ? <CropInspector compact={compact} /> : null}
       </div>
     </div>
   );
