@@ -13,6 +13,11 @@ const FONT_STACKS: Record<FontFamilyKey, string> = {
   mono: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
   display: '"Playfair Display", "Iowan Old Style", "Times New Roman", serif',
   serif: '"Cormorant Garamond", Baskerville, Georgia, serif',
+  brat: '"Arial Narrow", "Aptos Narrow", "Helvetica Neue", Arial, sans-serif',
+  helvetica: '"Helvetica Neue", Helvetica, Arial, sans-serif',
+  futura: 'Futura, "Century Gothic", Avenir, Montserrat, sans-serif',
+  slab: 'Aachen, "Aachen Bold", "Rockwell Extra Bold", Rockwell, Georgia, serif',
+  script: 'Mistral, "Brush Script MT", "Segoe Script", "Snell Roundhand", cursive',
 };
 
 export function resolveTextFontFamily(fontFamily: FontFamilyKey | string) {
@@ -23,6 +28,16 @@ export function resolveTextFontFamily(fontFamily: FontFamilyKey | string) {
       return FONT_STACKS.serif;
     case "mono":
       return FONT_STACKS.mono;
+    case "brat":
+      return FONT_STACKS.brat;
+    case "helvetica":
+      return FONT_STACKS.helvetica;
+    case "futura":
+      return FONT_STACKS.futura;
+    case "slab":
+      return FONT_STACKS.slab;
+    case "script":
+      return FONT_STACKS.script;
     case "sans":
     default:
       return FONT_STACKS.sans;
@@ -54,6 +69,13 @@ export function getTextShadowStyle(
         blur: 52,
         offsetX: 0,
         offsetY: 0,
+      };
+    case "red-offset":
+      return {
+        color: "#e31b23",
+        blur: 0,
+        offsetX: 5,
+        offsetY: 5,
       };
     case "none":
     default:
@@ -110,6 +132,20 @@ export function getFabricTextboxOptions(
     fontWeight: layer.fontWeight,
     backgroundColor: layer.backgroundColor ?? undefined,
   };
+}
+
+export function getTextCurvePathData(curve: number, width: number) {
+  if (!Number.isFinite(curve) || !Number.isFinite(width) || Math.abs(curve) < 1) {
+    return null;
+  }
+
+  const safeWidth = Math.max(1, width);
+  const normalizedCurve = Math.max(-100, Math.min(100, curve)) / 100;
+  const bend = normalizedCurve * safeWidth * 0.28;
+  const edgeY = bend > 0 ? bend : 0;
+  const controlY = bend > 0 ? 0 : Math.abs(bend);
+
+  return `M 0 ${edgeY} Q ${safeWidth / 2} ${controlY} ${safeWidth} ${edgeY}`;
 }
 
 export function getScaledTextShadowOptions(

@@ -42,6 +42,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { interpolateCropPoint } from "@/lib/social-export";
+import { resolveTextFontFamily } from "@/lib/text-style";
 import { cn, formatSignedValue, round, uid } from "@/lib/utils";
 
 const LOOK_CATEGORY_LABELS: Record<LookDefinition["category"], string> = {
@@ -651,6 +652,7 @@ function createLayerFromPreset(
     fontStyle: preset.fontStyle ?? "normal",
     fontWeight: preset.fontWeight ?? "500",
     textAlign: preset.textAlign ?? "center",
+    curve: preset.curve ?? 0,
   };
 }
 
@@ -679,6 +681,7 @@ function createCustomTextLayer(
     fontStyle: "normal",
     fontWeight: "500",
     textAlign: "center",
+    curve: 0,
   };
 }
 
@@ -745,7 +748,7 @@ function TextInspector({
       <PanelSection
         icon={Type}
         title="Text Presets"
-        detail="Preset title cards, subtitles, credits, and film-stamp overlays ready to drop on the Fabric canvas."
+        detail="Drop in cinematic titles, chapter cards, credits, film stamps, and select graphic treatments, then edit them on canvas."
       >
         <div className="space-y-3">
           <Button
@@ -771,7 +774,24 @@ function TextInspector({
                 <span className="block min-w-0 wrap-anywhere text-[9px] uppercase leading-4 tracking-widest text-foreground sm:text-[10px] sm:tracking-[0.16em]">
                   {preset.name}
                 </span>
-                <span className="mt-3 block text-xs leading-5 text-(--text-muted)">
+                <span
+                  className="mt-3 block px-1 py-0.5 text-xs leading-5"
+                  style={{
+                    color: preset.color,
+                    backgroundColor: preset.backgroundColor ?? undefined,
+                    fontFamily: resolveTextFontFamily(preset.fontFamily),
+                    fontStyle: preset.fontStyle ?? "normal",
+                    fontWeight: preset.fontWeight ?? "500",
+                    textAlign: preset.textAlign ?? "center",
+                    letterSpacing: `${preset.letterSpacing / 1000}em`,
+                    lineHeight: preset.lineHeight,
+                    whiteSpace: "pre-line",
+                    textShadow:
+                      preset.shadowPreset === "red-offset"
+                        ? "2px 2px 0 #e31b23"
+                        : undefined,
+                  }}
+                >
                   {preset.text}
                 </span>
               </button>

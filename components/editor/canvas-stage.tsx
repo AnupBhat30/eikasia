@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Canvas, Shadow, Textbox } from "fabric";
+import { Canvas, Path, Shadow, Textbox } from "fabric";
 import { Check, Trash2, Upload } from "lucide-react";
 
 import {
@@ -37,6 +37,7 @@ import { Slider } from "@/components/ui/slider";
 import {
   getFabricTextboxOptions,
   getScaledTextShadowOptions,
+  getTextCurvePathData,
   resolveTextFontFamily,
 } from "@/lib/text-style";
 import {
@@ -294,15 +295,54 @@ function inferFontFamily(fontFamily?: string): FontFamilyKey {
     return "sans";
   }
 
-  if (fontFamily.includes("jetbrains") || fontFamily.includes("mono")) {
+  const normalizedFamily = fontFamily.toLowerCase();
+
+  if (
+    normalizedFamily.includes("arial narrow") ||
+    normalizedFamily.includes("aptos narrow")
+  ) {
+    return "brat";
+  }
+
+  if (
+    normalizedFamily.includes("aachen") ||
+    normalizedFamily.includes("rockwell")
+  ) {
+    return "slab";
+  }
+
+  if (
+    normalizedFamily.includes("futura") ||
+    normalizedFamily.includes("century gothic")
+  ) {
+    return "futura";
+  }
+
+  if (
+    normalizedFamily.includes("mistral") ||
+    normalizedFamily.includes("brush script") ||
+    normalizedFamily.includes("segoe script") ||
+    normalizedFamily.includes("snell roundhand")
+  ) {
+    return "script";
+  }
+
+  if (
+    !normalizedFamily.includes("inter") &&
+    normalizedFamily.includes("helvetica neue")
+  ) {
+    return "helvetica";
+  }
+
+  if (normalizedFamily.includes("jetbrains") || normalizedFamily.includes("mono")) {
     return "mono";
   }
 
-  if (fontFamily.includes("cormorant")) {
+  if (normalizedFamily.includes("cormorant")) {
     return "serif";
   }
 
-  if (fontFamily.includes("playfair")) {
+  if (normalizedFamily.includes("playfair")) {
     return "display";
   }
 
@@ -365,6 +405,15 @@ function inferShadowPreset(shadow?: Shadow | null): ShadowPreset {
     return "neon";
   }
 
+  const shadowColor = `${shadow.color ?? ""}`.toLowerCase();
+  if (
+    shadowColor.includes("e31b23") ||
+    shadowColor.includes("227, 27, 35") ||
+    shadowColor.includes("227,27,35")
+  ) {
+    return "red-offset";
+  }
+
   if (
     (shadow.blur ?? 0) <= 6 &&
     ((shadow.offsetX ?? 0) > 1 || (shadow.offsetY ?? 0) > 1)
@@ -393,9 +442,20 @@ function applyLayerToTextbox(
   stageSize: StageSize,
 ) {
   const options = getFabricTextboxOptions(layer, stageSize.width, stageSize.height);
+  const curvePathData = getTextCurvePathData(layer.curve ?? 0, options.width);
+  const path = curvePathData
+    ? new Path(curvePathData, {
+        fill: "",
+        strokeWidth: 0,
+        visible: false,
+      })
+    : undefined;
 
   textbox.set({
     ...options,
+    path,
+    pathAlign: "center",
+    pathStartOffset: 0,
     editable: false,
     hoverCursor: "move",
     moveCursor: "move",
@@ -563,6 +623,7 @@ function serializeCanvas(
             : textbox.textAlign === "left"
               ? "left"
               : "center",
+        curve: existing?.curve ?? 0,
       } satisfies TextLayer;
     });
 }
@@ -3451,6 +3512,29 @@ export const CanvasStage = React.forwardRef<
                         onValueChange={([value]) =>
                           updateTextLayerInWorkspace(selectedTextLayer.id, {
                             widthPct: value,
+                          })
+                        }
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[11px] uppercase tracking-[0.22em] text-foreground">
+                          Text Curve
+                        </span>
+                        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-(--text-muted)">
+                          {(selectedTextLayer.curve ?? 0) > 0 ? "+" : ""}
+                          {Math.round(selectedTextLayer.curve ?? 0)}
+                        </span>
+                      </div>
+                      <Slider
+                        min={-100}
+                        max={100}
+                        step={1}
+                        value={[selectedTextLayer.curve ?? 0]}
+                        onValueChange={([value]) =>
+                          updateTextLayer(selectedTextLayer.id, {
+                            curve: value,
                           })
                         }
                       />

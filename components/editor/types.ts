@@ -11,14 +11,23 @@ export const TAB_IDS = [
 export type EditorTabId = (typeof TAB_IDS)[number];
 export type LookCategory = "fujifilm" | "analog" | "cinema" | "bw" | "colorful" | "chroma";
 export type AcrosChannel = "neutral" | "red" | "yellow" | "green";
-export type ShadowPreset = "none" | "soft" | "hard" | "neon";
+export type ShadowPreset = "none" | "soft" | "hard" | "neon" | "red-offset";
 export type BlendMode =
   | "normal"
   | "screen"
   | "multiply"
   | "overlay"
   | "soft-light";
-export type FontFamilyKey = "serif" | "sans" | "mono" | "display";
+export type FontFamilyKey =
+  | "serif"
+  | "sans"
+  | "mono"
+  | "display"
+  | "brat"
+  | "helvetica"
+  | "futura"
+  | "slab"
+  | "script";
 export type OverlayType = "grain" | "lightLeak" | "flare" | "border" | "dust";
 
 export interface LookWashLayer {
@@ -31,6 +40,24 @@ export interface LookRenderRecipe {
   layerBlendMode: BlendMode;
   layerOpacity: number;
   washes: LookWashLayer[];
+}
+
+export interface LookOpticalEffects {
+  /** Red/blue channel displacement, expressed in pixels per 1,000px. */
+  chromaticAberration?: number;
+  /** Horizontal highlight trail length, expressed in pixels per 1,000px. */
+  highlightSmear?: number;
+}
+
+export interface LookSelectiveColor {
+  /** Source-color hue centers to retain, in degrees. */
+  hueCenters: number[];
+  /** Feathered distance from each hue center, in degrees. */
+  hueRange: number;
+  /** Minimum source saturation required before color is retained. */
+  minimumSaturation: number;
+  /** Maximum retained-color mix. */
+  amount: number;
 }
 
 export interface LookPreset {
@@ -53,6 +80,8 @@ export interface LookDefinition {
   matrix: string;
   acrosChannels?: Record<AcrosChannel, string>;
   thumbnail: string;
+  opticalEffects?: LookOpticalEffects;
+  selectiveColor?: LookSelectiveColor;
   recommendedOverlay?: {
     intensity: number;
     size: number;
@@ -82,6 +111,7 @@ export interface TextLayer {
   fontStyle: "normal" | "italic";
   fontWeight: string;
   textAlign: "left" | "center" | "right";
+  curve: number;
 }
 
 export interface OverlayLayer {
@@ -170,6 +200,7 @@ export interface TextPresetDefinition {
   fontStyle?: "normal" | "italic";
   fontWeight?: string;
   textAlign?: "left" | "center" | "right";
+  curve?: number;
 }
 
 export interface OverlayPresetDefinition {

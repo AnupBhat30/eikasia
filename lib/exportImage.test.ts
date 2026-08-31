@@ -19,7 +19,9 @@ import {
   RENDERED_BORDER_PRESET_IDS,
   resolveNoiseReductionParameters,
   resolveEffectiveAdjustments,
+  resolveLookOpticalEffectParameters,
   resolveOverlayLayers,
+  resolveSelectiveColorMix,
   toneMapFilmic,
 } from "@/lib/exportImage";
 
@@ -116,6 +118,148 @@ describe("filter color safety", () => {
           true,
         );
       }
+    }
+  });
+
+  test("Fallen Angels optical effects scale with intensity and output size", () => {
+    const look = ALL_LOOKS.find((candidate) => candidate.id === "fallen-angels");
+
+    expect(look).toBeDefined();
+
+    const bypassed = resolveLookOpticalEffectParameters(look!, 0, 2000);
+    const preview = resolveLookOpticalEffectParameters(look!, 0.92, 1000);
+    const exportSize = resolveLookOpticalEffectParameters(look!, 0.92, 4000);
+
+    expect(bypassed.chromaticShift).toBe(0);
+    expect(bypassed.highlightSmear).toBe(0);
+    expect(preview.chromaticShift).toBeGreaterThan(0);
+    expect(preview.highlightSmear).toBeGreaterThan(0);
+    expect(exportSize.chromaticShift).toBeGreaterThanOrEqual(
+      preview.chromaticShift * 3.5,
+    );
+    expect(exportSize.highlightSmear).toBeGreaterThanOrEqual(
+      preview.highlightSmear * 3.5,
+    );
+  });
+
+  test("Fallen Angels preserves smoky near-blacks instead of clipping shadow depth", () => {
+    const project = createInitialProjectState();
+    const look = ALL_LOOKS.find((candidate) => candidate.id === "fallen-angels");
+
+    expect(look).toBeDefined();
+    expect(look!.renderRecipe.washes.some((wash) => wash.blendMode === "screen")).toBe(
+      false,
+    );
+    expect(look!.renderRecipe.layerBlendMode).toBe("normal");
+
+    project.activeLookId = look!.id;
+    project.filterIntensity = 100;
+    const adjustments = resolveEffectiveAdjustments(project);
+    const deepestShadow = mapToneValue(0.08, adjustments);
+    const nearBlack = mapToneValue(0.18, adjustments);
+    const lowerMidtone = mapToneValue(0.3, adjustments);
+
+    expect(deepestShadow).toBeGreaterThan(0.03);
+    expect(deepestShadow).toBeLessThan(0.06);
+    expect(nearBlack).toBeGreaterThan(0.12);
+    expect(nearBlack).toBeLessThan(0.17);
+    expect(lowerMidtone).toBeGreaterThan(0.25);
+  });
+
+  test("new signature looks preserve tonal range while allowing intentional color separation", () => {
+    const gentleLookIds = [
+      "amelie",
+      "call-me-by-your-name",
+      "three-strip-technicolor",
+    ];
+
+    for (const lookId of gentleLookIds) {
+      const project = createInitialProjectState();
+      const look = ALL_LOOKS.find((candidate) => candidate.id === lookId);
+
+      expect(look, lookId).toBeDefined();
+      project.activeLookId = lookId;
+      project.filterIntensity = 100;
+
+      const adjustments = resolveEffectiveAdjustments(project);
+      const deepShadow = mapToneValue(0.08, adjustments);
+      const midtone = mapToneValue(0.5, adjustments);
+      const brightHighlight = mapToneValue(0.92, adjustments);
+
+      expect(deepShadow, `${lookId} shadow floor`).toBeGreaterThan(0.09);
+      expect(deepShadow, `${lookId} shadow ceiling`).toBeLessThan(0.145);
+      expect(midtone, `${lookId} midtone floor`).toBeGreaterThan(0.47);
+      expect(midtone, `${lookId} midtone ceiling`).toBeLessThan(0.54);
+      expect(brightHighlight, `${lookId} highlight floor`).toBeGreaterThan(0.86);
+      expect(brightHighlight, `${lookId} highlight ceiling`).toBeLessThan(0.93);
+
+      const matrix = look!.matrix.trim().split(/\s+/).map(Number);
+      const neutralChannels = [0, 5, 10].map(
+        (offset) =>
+          0.5 * (matrix[offset] + matrix[offset + 1] + matrix[offset + 2]) +
+          matrix[offset + 4],
+      );
+      const channelSpread = Math.max(...neutralChannels) - Math.min(...neutralChannels);
+
+      expect(channelSpread, `${lookId} neutral color spread`).toBeLessThan(0.09);
+    }
+  });
+
+  test("new cinema signatures have a visibly meaningful default layer strength", () => {
+    for (const lookId of [
+      "amelie",
+      "call-me-by-your-name",
+      "three-strip-technicolor",
+      "fight-club",
+      "sin-city",
+      "the-dark-knight",
+      "chungking-express",
+    ]) {
+      const look = ALL_LOOKS.find((candidate) => candidate.id === lookId);
+      const effectiveLayerStrength =
+        (look!.preset.filterIntensity / 100) * look!.renderRecipe.layerOpacity;
+
+      expect(look, lookId).toBeDefined();
+      expect(effectiveLayerStrength, `${lookId} default layer strength`).toBeGreaterThan(
+        0.7,
+      );
+    }
+  });
+
+  test("Sin City retains strong reds without coloring skin, blues, or neutrals", () => {
+    const look = ALL_LOOKS.find((candidate) => candidate.id === "sin-city");
+
+    expect(look?.selectiveColor).toBeDefined();
+    const settings = look!.selectiveColor!;
+
+    expect(resolveSelectiveColorMix(220, 25, 35, settings)).toBeGreaterThan(0.8);
+    expect(resolveSelectiveColorMix(210, 140, 110, settings)).toBeLessThan(0.12);
+    expect(resolveSelectiveColorMix(25, 80, 220, settings)).toBe(0);
+    expect(resolveSelectiveColorMix(128, 128, 128, settings)).toBe(0);
+  });
+
+  test("dark cinema signatures keep readable blacks and recoverable highlights", () => {
+    for (const lookId of [
+      "fight-club",
+      "sin-city",
+      "the-dark-knight",
+      "chungking-express",
+    ]) {
+      const project = createInitialProjectState();
+      project.activeLookId = lookId;
+      project.filterIntensity = 100;
+      const adjustments = resolveEffectiveAdjustments(project);
+
+      expect(mapToneValue(0.08, adjustments), `${lookId} black detail`).toBeGreaterThan(
+        0.045,
+      );
+      expect(mapToneValue(0.5, adjustments), `${lookId} midtone detail`).toBeGreaterThan(
+        0.43,
+      );
+      expect(
+        mapToneValue(0.92, adjustments),
+        `${lookId} highlight detail`,
+      ).toBeLessThan(0.94);
     }
   });
 

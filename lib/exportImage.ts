@@ -1,5 +1,10 @@
-import type { Adjustments, ProjectState, TextLayer } from "@/components/editor/types";
-import type { LookDefinition } from "@/components/editor/types";
+import type {
+  Adjustments,
+  LookDefinition,
+  LookSelectiveColor,
+  ProjectState,
+  TextLayer,
+} from "@/components/editor/types";
 import {
   ADJUSTMENT_GROUPS,
   AUTO_GRAIN_LAYER_ID,
@@ -9,6 +14,7 @@ import {
 import {
   getFabricTextboxOptions,
   getScaledTextShadowOptions,
+  getTextCurvePathData,
 } from "@/lib/text-style";
 import {
   getCropGeometry,
@@ -101,6 +107,49 @@ export function packGamutMappedRgb(r: number, g: number, b: number): number {
   const mappedB = clampByte(targetLuminance + blueDelta * chromaScale);
 
   return (mappedR << 16) | (mappedG << 8) | mappedB;
+}
+
+export function resolveSelectiveColorMix(
+  r: number,
+  g: number,
+  b: number,
+  settings: LookSelectiveColor,
+): number {
+  const maxChannel = Math.max(r, g, b);
+  const minChannel = Math.min(r, g, b);
+  const chroma = maxChannel - minChannel;
+
+  if (chroma <= 0 || maxChannel <= 0 || settings.hueRange <= 0) {
+    return 0;
+  }
+
+  let hue: number;
+  if (maxChannel === r) {
+    hue = 60 * (((g - b) / chroma) % 6);
+  } else if (maxChannel === g) {
+    hue = 60 * ((b - r) / chroma + 2);
+  } else {
+    hue = 60 * ((r - g) / chroma + 4);
+  }
+  hue = (hue + 360) % 360;
+
+  const saturation = chroma / maxChannel;
+  const saturationWeight = clamp(
+    (saturation - settings.minimumSaturation) / 0.22,
+    0,
+    1,
+  );
+  const closestHueDistance = Math.min(
+    ...settings.hueCenters.map((center) => {
+      const normalizedCenter = ((center % 360) + 360) % 360;
+      const distance = Math.abs(hue - normalizedCenter);
+      return Math.min(distance, 360 - distance);
+    }),
+  );
+  const hueWeight = clamp(1 - closestHueDistance / settings.hueRange, 0, 1);
+  const feather = hueWeight * hueWeight * (3 - 2 * hueWeight);
+
+  return clamp(feather * saturationWeight * settings.amount, 0, 1);
 }
 
 export function toneMapFilmic(value: number) {
@@ -212,6 +261,7 @@ function getLookCanvas(
     context,
     look.cssFilter,
     resolveMatrix(look, acrosChannel),
+    look.selectiveColor,
     width,
     height,
   );
@@ -307,6 +357,16 @@ export function renderProjectRaster({
 
   const effectiveAdjustments = resolveEffectiveAdjustments(state);
   applyAdjustmentsToCanvas(ctx, effectiveAdjustments, width, height);
+
+  if (look && state.filterIntensity > 0) {
+    applyLookOpticalEffects(
+      ctx,
+      look,
+      state.filterIntensity / 100,
+      width,
+      height,
+    );
+  }
 
   const { effectLayers, borderLayers } = resolveOverlayLayers({
     ...state,
@@ -948,6 +1008,7 @@ function applyLookTransformToCanvas(
   ctx: RasterContext,
   filterString: string,
   matrixStr: string,
+  selectiveColor: LookSelectiveColor | undefined,
   w: number,
   h: number,
 ): void {
@@ -982,6 +1043,9 @@ function applyLookTransformToCanvas(
     let r = data[i];
     let g = data[i + 1];
     let b = data[i + 2];
+    const sourceR = r;
+    const sourceG = g;
+    const sourceB = b;
     const a = data[i + 3];
 
     for (let operationIndex = 0; operationIndex < operations.length; operationIndex++) {
@@ -1044,11 +1108,32 @@ function applyLookTransformToCanvas(
       }
     }
 
-    const packed = packGamutMappedRgb(
+    let packed = packGamutMappedRgb(
       m0 * r + m1 * g + m2 * b + m3 * a + m4,
       m5 * r + m6 * g + m7 * b + m8 * a + m9,
       m10 * r + m11 * g + m12 * b + m13 * a + m14,
     );
+
+    if (selectiveColor) {
+      const mix = resolveSelectiveColorMix(sourceR, sourceG, sourceB, selectiveColor);
+
+      if (mix > 0) {
+        const transformedR = packed >> 16;
+        const transformedG = (packed >> 8) & 0xff;
+        const transformedB = packed & 0xff;
+        const transformedLuma =
+          0.213 * transformedR + 0.715 * transformedG + 0.072 * transformedB;
+        const sourceLuma = 0.213 * sourceR + 0.715 * sourceG + 0.072 * sourceB;
+        const luminanceScale = sourceLuma > 0 ? transformedLuma / sourceLuma : 1;
+
+        packed = packGamutMappedRgb(
+          transformedR + (sourceR * luminanceScale - transformedR) * mix,
+          transformedG + (sourceG * luminanceScale - transformedG) * mix,
+          transformedB + (sourceB * luminanceScale - transformedB) * mix,
+        );
+      }
+    }
+
     data[i] = packed >> 16;
     data[i + 1] = (packed >> 8) & 0xff;
     data[i + 2] = packed & 0xff;
@@ -1094,6 +1179,160 @@ function compositeLookLayer(
     ctx.fillRect(0, 0, w, h);
     ctx.restore();
   });
+}
+
+export function resolveLookOpticalEffectParameters(
+  look: LookDefinition,
+  intensity: number,
+  maxDimension: number,
+) {
+  const mix = clamp(intensity, 0, 1);
+  const scale = Math.max(1, maxDimension) / 1000;
+
+  return {
+    chromaticShift: Math.max(
+      0,
+      Math.round((look.opticalEffects?.chromaticAberration ?? 0) * scale * mix),
+    ),
+    chromaticMix: clamp(
+      ((look.opticalEffects?.chromaticAberration ?? 0) / 4) * mix,
+      0,
+      0.72,
+    ),
+    highlightSmear: Math.max(
+      0,
+      Math.round((look.opticalEffects?.highlightSmear ?? 0) * scale * mix),
+    ),
+    highlightMix: clamp(
+      ((look.opticalEffects?.highlightSmear ?? 0) / 100) * mix,
+      0,
+      0.2,
+    ),
+  };
+}
+
+function applyLookOpticalEffects(
+  ctx: RasterContext,
+  look: LookDefinition,
+  intensity: number,
+  w: number,
+  h: number,
+) {
+  if (!look.opticalEffects) {
+    return;
+  }
+
+  const effects = resolveLookOpticalEffectParameters(
+    look,
+    intensity,
+    Math.max(w, h),
+  );
+
+  if (effects.chromaticShift > 0 && effects.chromaticMix > 0) {
+    applyChromaticAberration(
+      ctx,
+      effects.chromaticShift,
+      effects.chromaticMix,
+      w,
+      h,
+    );
+  }
+
+  if (effects.highlightSmear > 0 && effects.highlightMix > 0) {
+    applyHighlightSmear(
+      ctx,
+      effects.highlightSmear,
+      effects.highlightMix,
+      w,
+      h,
+    );
+  }
+}
+
+function applyChromaticAberration(
+  ctx: RasterContext,
+  shift: number,
+  mix: number,
+  w: number,
+  h: number,
+) {
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const source = new Uint8ClampedArray(imageData.data);
+  const output = imageData.data;
+
+  for (let y = 0; y < h; y += 1) {
+    const rowOffset = y * w;
+
+    for (let x = 0; x < w; x += 1) {
+      const centerIndex = (rowOffset + x) * 4;
+      const redIndex = (rowOffset + Math.max(0, x - shift)) * 4;
+      const blueIndex = (rowOffset + Math.min(w - 1, x + shift)) * 4;
+
+      output[centerIndex] = clampByte(
+        source[centerIndex] + (source[redIndex] - source[centerIndex]) * mix,
+      );
+      output[centerIndex + 2] = clampByte(
+        source[centerIndex + 2] +
+          (source[blueIndex + 2] - source[centerIndex + 2]) * mix,
+      );
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function applyHighlightSmear(
+  ctx: RasterContext,
+  distance: number,
+  mix: number,
+  w: number,
+  h: number,
+) {
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const source = imageData.data;
+  const smearCanvas = createWorkingCanvas(w, h);
+  const smearContext = getWorkingContext(smearCanvas);
+  const highlights = smearContext.createImageData(w, h);
+  const highlightData = highlights.data;
+  const threshold = 184;
+
+  for (let index = 0; index < source.length; index += 4) {
+    const luminance =
+      0.213 * source[index] +
+      0.715 * source[index + 1] +
+      0.072 * source[index + 2];
+
+    if (luminance <= threshold) {
+      continue;
+    }
+
+    const highlightStrength = (luminance - threshold) / (255 - threshold);
+    highlightData[index] = source[index];
+    highlightData[index + 1] = source[index + 1];
+    highlightData[index + 2] = source[index + 2];
+    highlightData[index + 3] = clampByte(highlightStrength * 150);
+  }
+
+  smearContext.putImageData(highlights, 0, 0);
+
+  const previousAlpha = ctx.globalAlpha;
+  const previousComposite = ctx.globalCompositeOperation;
+  const previousFilter = ctx.filter;
+  const samples = 7;
+
+  ctx.globalCompositeOperation = "screen";
+  ctx.filter = `blur(${Math.max(1, Math.round(Math.max(w, h) / 700))}px)`;
+
+  for (let sample = 0; sample < samples; sample += 1) {
+    const progress = sample / (samples - 1) - 0.5;
+    const falloff = 1 - Math.abs(progress) * 1.35;
+    ctx.globalAlpha = mix * Math.max(0.15, falloff);
+    ctx.drawImage(smearCanvas, Math.round(progress * distance * 2), 0);
+  }
+
+  ctx.filter = previousFilter;
+  ctx.globalCompositeOperation = previousComposite;
+  ctx.globalAlpha = previousAlpha;
 }
 
 function parseCssFilterString(filterString: string): ParsedCssFilter[] {
@@ -1817,7 +2056,10 @@ function compositeTextLayer(
   layer: TextLayer,
   w: number,
   h: number,
-  fabric: Pick<typeof import("fabric"), "Shadow" | "StaticCanvas" | "Textbox">,
+  fabric: Pick<
+    typeof import("fabric"),
+    "Path" | "Shadow" | "StaticCanvas" | "Textbox"
+  >,
   stageSize?: { width: number; height: number },
 ): void {
   // Create a temporary HTML canvas in the browser document
@@ -1833,10 +2075,21 @@ function compositeTextLayer(
 
   // Calculate the options for the Fabric Textbox using the shared builder
   const options = getFabricTextboxOptions(layer, w, h);
+  const curvePathData = getTextCurvePathData(layer.curve ?? 0, options.width);
+  const path = curvePathData
+    ? new fabric.Path(curvePathData, {
+        fill: "",
+        strokeWidth: 0,
+        visible: false,
+      })
+    : undefined;
 
   // Create the Textbox object
   const textbox = new fabric.Textbox(layer.text, {
     ...options,
+    path,
+    pathAlign: "center",
+    pathStartOffset: 0,
     editable: false,
   } as ConstructorParameters<typeof fabric.Textbox>[1]);
 

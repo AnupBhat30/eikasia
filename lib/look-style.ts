@@ -367,6 +367,69 @@ const LOOK_RENDER_RECIPE_OVERRIDES: Record<string, Partial<LookRenderRecipe>> = 
       wash("#9a3f4f", 0.055, "soft-light"),
     ],
   },
+  "fallen-angels": {
+    layerBlendMode: "normal",
+    layerOpacity: 0.88,
+    washes: [
+      wash("#061f13", 0.12, "multiply"),
+      wash("#67c975", 0.08, "soft-light"),
+      wash("#b7d75e", 0.02, "overlay"),
+    ],
+  },
+  amelie: {
+    layerBlendMode: "soft-light",
+    layerOpacity: 0.86,
+    washes: [
+      wash("#e6b84d", 0.05, "screen"),
+      wash("#315f42", 0.035, "soft-light"),
+      wash("#a84038", 0.025, "soft-light"),
+    ],
+  },
+  "call-me-by-your-name": {
+    layerBlendMode: "soft-light",
+    layerOpacity: 0.82,
+    washes: [
+      wash("#f2d59a", 0.05, "screen"),
+      wash("#718560", 0.025, "soft-light"),
+    ],
+  },
+  "three-strip-technicolor": {
+    layerBlendMode: "normal",
+    layerOpacity: 0.84,
+    washes: [
+      wash("#f5dfb4", 0.022, "screen"),
+      wash("#315f59", 0.014, "soft-light"),
+    ],
+  },
+  "fight-club": {
+    layerBlendMode: "soft-light",
+    layerOpacity: 0.9,
+    washes: [
+      wash("#4a5f3d", 0.055, "multiply"),
+      wash("#c0a56d", 0.022, "screen"),
+    ],
+  },
+  "sin-city": {
+    layerBlendMode: "normal",
+    layerOpacity: 1,
+    washes: [],
+  },
+  "the-dark-knight": {
+    layerBlendMode: "normal",
+    layerOpacity: 0.88,
+    washes: [
+      wash("#243f52", 0.04, "soft-light"),
+      wash("#d4c39f", 0.01, "screen"),
+    ],
+  },
+  "chungking-express": {
+    layerBlendMode: "normal",
+    layerOpacity: 0.9,
+    washes: [
+      wash("#d83f43", 0.04, "soft-light"),
+      wash("#38aab8", 0.03, "soft-light"),
+    ],
+  },
   "barbie-core": {
     layerBlendMode: "normal",
     layerOpacity: 0.82,
