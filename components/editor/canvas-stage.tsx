@@ -2952,7 +2952,7 @@ export const CanvasStage = React.forwardRef<
                 Drop Your Frame
               </p>
               <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-(--text-muted)">
-                PNG, JPG, WEBP, AVIF, HEIC up to 50MB
+                PNG, JPG, HEIC, WEBP, AVIF, BMP up to 50MB
               </p>
               <p className="mx-auto max-w-sm text-xs leading-5 text-(--text-muted)">
                 Your photo stays in this browser while you apply film looks,

@@ -55,6 +55,12 @@ import {
   resolveExportDimensions,
   type ExportTarget,
 } from "@/lib/social-export";
+import {
+  convertHeicSourceToJpeg,
+  getSourceImageKind,
+  SOURCE_IMAGE_ACCEPT,
+  SOURCE_IMAGE_FORMAT_NOTICE,
+} from "@/lib/source-image";
 
 const SIDEBAR_TABS: {
   id: EditorTabId;
@@ -78,15 +84,6 @@ const EXPORT_QUALITY_OPTIONS = [
 
 const MAX_SOURCE_PIXELS = 100_000_000;
 const MAX_SOURCE_SIDE = 24_000;
-const ACCEPTED_SOURCE_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/avif",
-  "image/heic",
-  "image/heif",
-]);
-const ACCEPTED_SOURCE_EXTENSION = /\.(?:png|jpe?g|webp|avif|heic|heif)$/i;
 
 type PreparedExport = ExportImageResult & {
   previewUrl: string;
@@ -814,11 +811,10 @@ function EikasiaEditorShell() {
 
   const handleFrameLoad = React.useCallback(
     async (file: File) => {
-      if (
-        !ACCEPTED_SOURCE_TYPES.has(file.type.toLowerCase()) &&
-        !ACCEPTED_SOURCE_EXTENSION.test(file.name)
-      ) {
-        setNotice("Use a PNG, JPG, WEBP, AVIF, HEIC, or HEIF image.");
+      const sourceKind = getSourceImageKind(file);
+
+      if (!sourceKind) {
+        setNotice(SOURCE_IMAGE_FORMAT_NOTICE);
         return;
       }
 
@@ -835,17 +831,46 @@ function EikasiaEditorShell() {
         return;
       }
 
-      const objectUrl = URL.createObjectURL(file);
+      let objectUrl: string | null = URL.createObjectURL(file);
+      let convertedFromHeic = false;
       const revision = imageLoadRevisionRef.current + 1;
       imageLoadRevisionRef.current = revision;
       setImporting(true);
       setNotice("Preparing image…");
 
       try {
-        const dimensions = await loadImageDimensions(objectUrl);
+        let dimensions: { width: number; height: number };
+
+        try {
+          dimensions = await loadImageDimensions(objectUrl);
+        } catch (nativeDecodeError) {
+          if (sourceKind !== "heic") {
+            throw nativeDecodeError;
+          }
+
+          URL.revokeObjectURL(objectUrl);
+          objectUrl = null;
+
+          if (revision !== imageLoadRevisionRef.current) {
+            return;
+          }
+
+          setNotice("Converting HEIC locally…");
+          const convertedBlob = await convertHeicSourceToJpeg(file);
+
+          if (revision !== imageLoadRevisionRef.current) {
+            return;
+          }
+
+          objectUrl = URL.createObjectURL(convertedBlob);
+          dimensions = await loadImageDimensions(objectUrl);
+          convertedFromHeic = true;
+        }
 
         if (revision !== imageLoadRevisionRef.current) {
-          URL.revokeObjectURL(objectUrl);
+          if (objectUrl) {
+            URL.revokeObjectURL(objectUrl);
+          }
           return;
         }
 
@@ -854,17 +879,27 @@ function EikasiaEditorShell() {
           dimensions.height > MAX_SOURCE_SIDE ||
           dimensions.width * dimensions.height > MAX_SOURCE_PIXELS
         ) {
-          URL.revokeObjectURL(objectUrl);
+          if (objectUrl) {
+            URL.revokeObjectURL(objectUrl);
+          }
           setNotice(
             "This frame is too large to edit safely. Use an image below 100 megapixels and 24,000px per side.",
           );
           return;
         }
 
+        if (!objectUrl) {
+          throw new Error("The selected image could not be prepared.");
+        }
+
         const previousUrls = objectUrlsRef.current;
         objectUrlsRef.current = [objectUrl];
         setImage(objectUrl, file.name);
-        setNotice(null);
+        setNotice(
+          convertedFromHeic
+            ? "HEIC converted locally for editing — the original was not uploaded."
+            : null,
+        );
         setSelectedTextId(null);
         setMobileToolsOpen(false);
         setMobileToolsExpanded(false);
@@ -875,7 +910,9 @@ function EikasiaEditorShell() {
           previousUrls.forEach((url) => URL.revokeObjectURL(url));
         });
       } catch (error) {
-        URL.revokeObjectURL(objectUrl);
+        if (objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+        }
         setNotice(
           error instanceof Error
             ? error.message
@@ -1032,7 +1069,7 @@ function EikasiaEditorShell() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/avif,image/heic,image/heif,.heic,.heif"
+        accept={SOURCE_IMAGE_ACCEPT}
         className="hidden"
         onChange={(event) => {
           const file = event.target.files?.[0];
